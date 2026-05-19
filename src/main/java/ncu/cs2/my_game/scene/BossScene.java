@@ -13,9 +13,19 @@ import javafx.stage.Stage;
 import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.Main;
 import ncu.cs2.my_game.entity.Boss;
+import ncu.cs2.my_game.entity.Fireball;
 import ncu.cs2.my_game.entity.Player;
 import ncu.cs2.my_game.fsm.BossState;
+import ncu.cs2.my_game.item.Inventory;
+import ncu.cs2.my_game.item.PickupItem;
+import ncu.cs2.my_game.item.PickupType;
+import ncu.cs2.my_game.item.UseContext;
 import ncu.cs2.my_game.physics.Collision;
+import ncu.cs2.my_game.state.StageSnapshot;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
 
 /**
  * Boss 戰場景，繼承 AnimationTimer 充當遊戲迴圈。
@@ -84,7 +94,19 @@ public class BossScene extends AnimationTimer {
     private final Player player;
 
     /** Boss 實體（AI 由 BossStateMachine 驅動） */
-    private final Boss boss;
+    private Boss boss;
+
+    /** 跨關卡背包 */
+    private final Inventory inventory;
+
+    /** Boss 關可撿取道具 */
+    private final List<PickupItem> pickupItems;
+
+    /** 掉落用亂數 */
+    private final Random random;
+
+    /** Boss 關剛進入時的狀態快照 */
+    private final StageSnapshot initialSnapshot;
 
     /** 地板碰撞框（橫跨整個畫面底部） */
     private final Rectangle2D ground;
@@ -131,6 +153,9 @@ public class BossScene extends AnimationTimer {
      */
     private boolean rKeyPressed = false;
 
+    /** Boss 死亡掉落是否已產生 */
+    private boolean bossDropHandled = false;
+
     /** Boss 身體接觸傷害的冷卻計時器（秒）；> 0 時不會再次造成接觸傷害 */
     private double bossContactCooldown = 0;
 
@@ -161,6 +186,9 @@ public class BossScene extends AnimationTimer {
 
         // ── 初始化 Boss（右側登場，落到地面，FSM 起始 IDLE 1 秒） ─────────────
         boss = new Boss(700, 340, player);
+        inventory = Main.getInventory();
+        pickupItems = new ArrayList<>();
+        random = new Random();
 
         // ── 地板 ──────────────────────────────────────────────────────────────
         ground = new Rectangle2D(0, GROUND_Y, Config.WINDOW_WIDTH, Config.GROUND_THICKNESS);
@@ -177,10 +205,17 @@ public class BossScene extends AnimationTimer {
             new Rectangle2D(620, 420, 110, PLAT_H),
         };
 
+        initialSnapshot = new StageSnapshot(
+            player.getX(), player.getY(), player.getHp(),
+            inventory, pickupItems, new ArrayList<>(),
+            false, 0, 0, 0, 0
+        );
+
         // ── 鍵盤事件 ──────────────────────────────────────────────────────────
         javafxScene.setOnKeyPressed(e -> {
             // 正常移動輸入轉發給玩家
             player.handleKeyPressed(e.getCode());
+            handleInventoryKey(e.getCode());
 
             // 玩家死亡時按 R 重啟本關
             if (e.getCode() == KeyCode.R && !player.isAlive()) {
@@ -235,6 +270,11 @@ public class BossScene extends AnimationTimer {
 
         // ── 分支 1：Boss 死亡倒計時 ───────────────────────────────────────────
         if (boss.getCurrentState() == BossState.DEAD) {
+            if (!bossDropHandled) {
+                bossDropHandled = true;
+                spawnBossDrops();
+            }
+
             bossDeadTimer += dt;
 
             // 仍更新視覺計時器，讓閃光與文字正常淡出
@@ -254,10 +294,7 @@ public class BossScene extends AnimationTimer {
         if (!player.isAlive()) {
             if (rKeyPressed) {
                 rKeyPressed   = false;
-                transitioning = true;
-                this.stop();
-                Main.setPersistedHp(Config.PLAYER_MAX_HP);   // 重啟時重置血量
-                Main.startBoss();
+                rollbackToInitialSnapshot();
             }
             return;
         }
@@ -290,9 +327,11 @@ public class BossScene extends AnimationTimer {
 
         // 7. 戰鬥碰撞判定
         checkPlayerAttackVsBoss();
+        checkPlayerFireballsVsBoss();
         checkBossDashVsPlayer();
         checkBossProjectilesVsPlayer();
         checkBossBodyContactVsPlayer();
+        checkPickupItems();
 
         // 8. 階段轉換檢查（首次跌破閾值時觸發視覺效果）
         checkPhaseTransitions();
@@ -341,6 +380,46 @@ public class BossScene extends AnimationTimer {
         }
     }
 
+    /**
+     * 使用背包快捷鍵。
+     */
+    private void handleInventoryKey(KeyCode key) {
+        PickupType type = switch (key) {
+            case DIGIT1 -> PickupType.SMALL_POTION;
+            case DIGIT2 -> PickupType.LARGE_POTION;
+            case DIGIT3 -> PickupType.FIRE_SCROLL;
+            case DIGIT4 -> PickupType.BOMB;
+            case DIGIT5 -> PickupType.ICE_SCROLL;
+            default -> null;
+        };
+        if (type != null) {
+            inventory.use(type, new UseContext(player, null, boss));
+        }
+    }
+
+    /**
+     * 死亡重生時回滾到剛進入 Boss 關的狀態。
+     */
+    private void rollbackToInitialSnapshot() {
+        player.resetForCheckpoint(initialSnapshot.getPlayerX(),
+                                  initialSnapshot.getPlayerY(),
+                                  initialSnapshot.getPlayerHp());
+        initialSnapshot.restoreInventory(inventory);
+        pickupItems.clear();
+        pickupItems.addAll(initialSnapshot.createPickupItems());
+        boss = new Boss(700, 340, player);
+
+        phase2Triggered = false;
+        phase3Triggered = false;
+        flashTimer = 0;
+        phaseTextTimer = 0;
+        phaseText = "";
+        bossDeadTimer = 0;
+        bossDropHandled = false;
+        bossContactCooldown = 0;
+        transitioning = false;
+    }
+
     // ── 戰鬥判定 ─────────────────────────────────────────────────────────────
 
     /**
@@ -362,6 +441,43 @@ public class BossScene extends AnimationTimer {
     }
 
     /**
+     * 判定玩家火球是否命中 Boss、地板或平台。
+     * 火球命中 Boss 後造成傷害並消失；撞到地形也會消失。
+     */
+    private void checkPlayerFireballsVsBoss() {
+        for (Fireball fireball : player.getFireballs()) {
+            if (!fireball.isAlive()) continue;
+
+            if (boss.isAlive() && Collision.checkAABB(fireball.getHitbox(), boss.getHitbox())) {
+                boss.takeDamage(fireball.getDamage());
+                fireball.destroy();
+                continue;
+            }
+
+            destroyFireballOnWall(fireball);
+        }
+    }
+
+    /**
+     * 火球撞到 Boss 場景的地板或平台時消失。
+     *
+     * @param fireball 要檢查的火球
+     */
+    private void destroyFireballOnWall(Fireball fireball) {
+        if (Collision.checkAABB(fireball.getHitbox(), ground)) {
+            fireball.destroy();
+            return;
+        }
+
+        for (Rectangle2D platform : platforms) {
+            if (Collision.checkAABB(fireball.getHitbox(), platform)) {
+                fireball.destroy();
+                return;
+            }
+        }
+    }
+
+    /**
      * 判定 Boss DASH 衝刺的攻擊框是否命中玩家。
      * Boss.getAttackBox() 在非 DASH 狀態回傳 null，因此不需要額外狀態判斷。
      * 衝刺命中造成 {@value #BOSS_DASH_DAMAGE} 點傷害。
@@ -378,16 +494,34 @@ public class BossScene extends AnimationTimer {
     /**
      * 逐一檢查 Boss 所有存活的投射物是否命中玩家。
      * 命中後呼叫 p.destroy() 標記消滅，Boss.update() 的 removeIf 會在下幀清除。
-     * 傷害量由 Boss.Projectile.getDamage() 決定（目前 15 點）。
+     * 傷害量由 Fireball.getDamage() 決定（目前 Boss 火球 15 點）。
      */
     private void checkBossProjectilesVsPlayer() {
-        for (Boss.Projectile p : boss.getProjectiles()) {
+        for (Fireball p : boss.getProjectiles()) {
             if (!p.isAlive()) continue;
+            if (isFireballTouchingWall(p)) {
+                p.destroy();
+                continue;
+            }
             if (Collision.checkAABB(p.getHitbox(), player.getHitbox())) {
                 player.takeDamage(p.getDamage());
                 p.destroy();   // 命中後消滅，下幀由 Boss.update() 清除
             }
         }
+    }
+
+    /**
+     * 檢查火球是否撞到 Boss 場景地形。
+     */
+    private boolean isFireballTouchingWall(Fireball fireball) {
+        if (Collision.checkAABB(fireball.getHitbox(), ground)) return true;
+
+        for (Rectangle2D platform : platforms) {
+            if (Collision.checkAABB(fireball.getHitbox(), platform)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -402,6 +536,40 @@ public class BossScene extends AnimationTimer {
             player.takeDamage(BOSS_CONTACT_DAMAGE);
             bossContactCooldown = BOSS_CONTACT_COOLDOWN;
         }
+    }
+
+    /**
+     * 玩家碰到 Boss 關道具時撿進背包。
+     */
+    private void checkPickupItems() {
+        for (PickupItem item : pickupItems) {
+            if (item.isPickedUp()) continue;
+            if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
+                inventory.add(item.getType());
+                item.markPickedUp();
+            }
+        }
+        pickupItems.removeIf(PickupItem::isPickedUp);
+    }
+
+    /**
+     * Boss 死亡必掉至少一個稀有道具，並額外機率掉大藥水。
+     */
+    private void spawnBossDrops() {
+        PickupType rare = random.nextBoolean() ? PickupType.FIRE_SCROLL : PickupType.ICE_SCROLL;
+        spawnPickup(rare, boss.getX(), boss.getY() + boss.getHeight() - PickupItem.SIZE);
+
+        if (random.nextDouble() < 0.65) {
+            spawnPickup(PickupType.LARGE_POTION,
+                        boss.getX() + PickupItem.SIZE + 6,
+                        boss.getY() + boss.getHeight() - PickupItem.SIZE);
+        }
+    }
+
+    private void spawnPickup(PickupType type, double x, double y) {
+        double px = Math.max(0, Math.min(x, Config.WINDOW_WIDTH - PickupItem.SIZE));
+        double py = Math.max(0, Math.min(y, Config.WINDOW_HEIGHT - Config.GROUND_THICKNESS - PickupItem.SIZE));
+        pickupItems.add(type.create(px, py));
     }
 
     // ── 階段管理 ─────────────────────────────────────────────────────────────
@@ -472,13 +640,18 @@ public class BossScene extends AnimationTimer {
         // 3. 閃躲平台（TODO: 換成石板 Tileset）
         drawPlatforms(gc);
 
-        // 4. Boss（含投射物、血量條頭頂版、狀態標籤）
+        // 4. 地板道具
+        for (PickupItem item : pickupItems) {
+            item.draw(gc);
+        }
+
+        // 5. Boss（含投射物、血量條頭頂版、狀態標籤）
         boss.draw(gc);
 
-        // 5. 玩家（最後畫在最上層）
+        // 6. 玩家（最後畫在最上層）
         player.draw(gc);
 
-        // 6. HUD（玩家左上角 + Boss 頂部中央）
+        // 7. HUD（玩家左上角 + Boss 頂部中央）
         drawHUD(gc);
 
         // 7. 紅色閃光疊加層（階段轉換時）
@@ -565,6 +738,8 @@ public class BossScene extends AnimationTimer {
         gc.setFont(Font.font(11));
         gc.fillText(player.getHp() + " / " + player.getMaxHp(),
                     barX + barW + 6, barY + 11);
+
+        drawFireballCooldownHUD(gc);
     }
 
     /**
@@ -608,6 +783,34 @@ public class BossScene extends AnimationTimer {
         gc.setFont(Font.font(11));
         gc.fillText(boss.getHp() + " / " + boss.getMaxHp(),
                     barX + BOSS_BAR_W + 6, barY + 13);
+
+        drawInventoryHUD(gc);
+    }
+
+    /**
+     * 繪製火球術冷卻。
+     */
+    private void drawFireballCooldownHUD(GraphicsContext gc) {
+        gc.setFill(Color.WHITE);
+        gc.setFont(Font.font(12));
+        String text = player.canCastFireball()
+            ? "Fireball: Ready"
+            : "Fireball: " + String.format("%.1fs", player.getFireballCooldownTimer());
+        gc.fillText(text, 12, 48);
+    }
+
+    /**
+     * 依 Inventory/PickupType 自動繪製背包數量。
+     */
+    private void drawInventoryHUD(GraphicsContext gc) {
+        gc.setFill(Color.WHITE);
+        gc.setFont(Font.font(11));
+        double x = 12;
+        double y = Config.WINDOW_HEIGHT - 62;
+        for (PickupType type : inventory.getDisplayTypes()) {
+            gc.fillText(type.getHudLabel() + ": " + inventory.getCount(type), x, y);
+            y += 12;
+        }
     }
 
     /**

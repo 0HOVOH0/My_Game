@@ -56,6 +56,12 @@ public class Enemy extends Entity {
      */
     private double damageCooldown;
 
+    /** 冰凍/緩速剩餘時間（秒） */
+    private double slowTimer;
+
+    /** 目前速度倍率，1.0 表示正常速度 */
+    private double speedMultiplier;
+
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
@@ -72,6 +78,8 @@ public class Enemy extends Entity {
         this.patrolRight = patrolRight;
         this.moveDir     = 1.0;   // 初始向右
         this.damageCooldown = 0;
+        this.slowTimer = 0;
+        this.speedMultiplier = 1.0;
     }
 
     // ── update ────────────────────────────────────────────────────────────────
@@ -91,7 +99,7 @@ public class Enemy extends Entity {
         Gravity.apply(this, deltaTime);
 
         // 2. 設定水平速度並更新位置
-        velocityX = moveDir * PATROL_SPEED;
+        velocityX = moveDir * PATROL_SPEED * speedMultiplier;
         x += velocityX * deltaTime;
         y += velocityY * deltaTime;
 
@@ -106,6 +114,15 @@ public class Enemy extends Entity {
 
         // 4. 傷害冷卻計時器遞減
         if (damageCooldown > 0) damageCooldown -= deltaTime;
+
+        // 5. 緩速計時器遞減
+        if (slowTimer > 0) {
+            slowTimer -= deltaTime;
+            if (slowTimer <= 0) {
+                slowTimer = 0;
+                speedMultiplier = 1.0;
+            }
+        }
     }
 
     // ── 受傷 ─────────────────────────────────────────────────────────────────
@@ -117,6 +134,17 @@ public class Enemy extends Entity {
      */
     public void takeDamage(int amount) {
         setHp(hp - amount);
+    }
+
+    /**
+     * 暫時降低敵人巡邏速度。
+     *
+     * @param duration   持續時間（秒）
+     * @param multiplier 速度倍率，0.5 表示半速
+     */
+    public void applySlow(double duration, double multiplier) {
+        slowTimer = Math.max(slowTimer, duration);
+        speedMultiplier = Math.min(speedMultiplier, multiplier);
     }
 
     // ── 接觸傷害 ─────────────────────────────────────────────────────────────
@@ -163,7 +191,7 @@ public class Enemy extends Entity {
 
         // 本體（磚紅色）
         // TODO: 換成敵人精靈圖動畫
-        gc.setFill(Color.FIREBRICK);
+        gc.setFill(slowTimer > 0 ? Color.LIGHTBLUE : Color.FIREBRICK);
         gc.fillRect(x, y, width, height);
 
         // 眼睛指示移動方向（往右眼睛靠右，往左眼睛靠左）

@@ -7,7 +7,9 @@ import javafx.scene.paint.Color;
 import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.physics.Gravity;
 
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -30,6 +32,14 @@ public class Player extends Entity {
     /** 攻擊判定框高度（像素） */
     public static final double ATTACK_BOX_H    = 34.0;
 
+    // ── 火球常數 ─────────────────────────────────────────────────────────────
+
+    /** 火球術冷卻時間（秒） */
+    public static final double FIREBALL_COOLDOWN = 5.0;
+
+    /** 強化火球傷害 */
+    public static final int EMPOWERED_FIREBALL_DAMAGE = 60;
+
     // ── 無敵常數 ─────────────────────────────────────────────────────────────
 
     /** 受傷後的無敵時間（秒） */
@@ -45,6 +55,9 @@ public class Player extends Entity {
 
     /** 面向方向；true = 右，false = 左 */
     private boolean facingRight;
+
+    /** 面向方向；供火球決定發射方向 */
+    private Direction facingDirection;
 
     /** 目前是否正在攻擊（攻擊判定框存在中） */
     private boolean isAttacking;
@@ -63,6 +76,14 @@ public class Player extends Entity {
 
     /** 攻擊判定框剩餘存在時間（秒） */
     private double attackTimer;
+
+    // ── 火球 ─────────────────────────────────────────────────────────────────
+
+    /** 目前仍存在的玩家火球 */
+    private final List<Fireball> fireballs;
+
+    /** 火球術剩餘冷卻時間（秒）；0 時可再次施放 */
+    private double fireballCooldownTimer;
 
     // ── 無敵與閃爍 ───────────────────────────────────────────────────────────
 
@@ -91,10 +112,13 @@ public class Player extends Entity {
     public Player(double x, double y) {
         super(x, y, Config.PLAYER_WIDTH, Config.PLAYER_HEIGHT, Config.PLAYER_MAX_HP);
         facingRight    = true;
+        facingDirection = Direction.RIGHT;
         isOnGround     = false;
         isAttacking    = false;
         attackLanded   = false;
         attackTimer    = 0;
+        fireballs      = new ArrayList<>();
+        fireballCooldownTimer = 0;
         invincibleTimer = 0;
         flickerTimer   = 0;
         flickerVisible  = true;
@@ -123,7 +147,10 @@ public class Player extends Entity {
         // 4. 攻擊計時——同步攻擊框位置，時間到則清除
         updateAttack(deltaTime);
 
-        // 5. 無敵與閃爍計時
+        // 5. 火球冷卻與投射物更新
+        updateFireballs(deltaTime);
+
+        // 6. 無敵與閃爍計時
         updateInvincibility(deltaTime);
     }
 
@@ -137,11 +164,13 @@ public class Player extends Entity {
         if (activeKeys.contains(KeyCode.A)) {
             velocityX   = -Config.PLAYER_SPEED;
             facingRight = false;
+            facingDirection = Direction.LEFT;
         }
         if (activeKeys.contains(KeyCode.D)) {
             // D 鍵後蓋 A 鍵，右方向優先
             velocityX   = Config.PLAYER_SPEED;
             facingRight = true;
+            facingDirection = Direction.RIGHT;
         }
     }
 
@@ -167,6 +196,23 @@ public class Player extends Entity {
         double boxX = facingRight ? x + width : x - ATTACK_BOX_W;
         double boxY = y + (height - ATTACK_BOX_H) / 2.0;
         attackBox = new Rectangle2D(boxX, boxY, ATTACK_BOX_W, ATTACK_BOX_H);
+    }
+
+    /**
+     * 更新火球冷卻與火球位置，並清除已消失的火球。
+     *
+     * @param deltaTime 時間差（秒）
+     */
+    private void updateFireballs(double deltaTime) {
+        if (fireballCooldownTimer > 0) {
+            fireballCooldownTimer -= deltaTime;
+            if (fireballCooldownTimer < 0) fireballCooldownTimer = 0;
+        }
+
+        fireballs.removeIf(fireball -> !fireball.isAlive());
+        for (Fireball fireball : fireballs) {
+            fireball.update(deltaTime);
+        }
     }
 
     /**
@@ -205,6 +251,8 @@ public class Player extends Entity {
     public void handleKeyPressed(KeyCode key) {
         activeKeys.add(key);
 
+        updateFacingDirectionFromKey(key);
+
         // 跳躍：W 或空白鍵，且必須站在地面
         if ((key == KeyCode.W || key == KeyCode.SPACE) && isOnGround) {
             velocityY  = Config.JUMP_FORCE;
@@ -214,6 +262,11 @@ public class Player extends Entity {
         // 攻擊：J 鍵，且目前不在攻擊狀態（避免動畫插入）
         if (key == KeyCode.J && !isAttacking) {
             startAttack();
+        }
+
+        // 火球術：F 鍵，依目前面向發射；有 5 秒冷卻
+        if (key == KeyCode.F) {
+            castFireball();
         }
     }
 
@@ -239,6 +292,72 @@ public class Player extends Entity {
         double boxX = facingRight ? x + width : x - ATTACK_BOX_W;
         double boxY = y + (height - ATTACK_BOX_H) / 2.0;
         attackBox = new Rectangle2D(boxX, boxY, ATTACK_BOX_W, ATTACK_BOX_H);
+    }
+
+    /**
+     * 施放火球術：若冷卻完成，從玩家中心附近依當前面向產生火球。
+     */
+    private void castFireball() {
+        if (fireballCooldownTimer > 0) return;
+
+        spawnFireball(Fireball.SIZE, Fireball.SPEED, Fireball.DAMAGE,
+                      Color.ORANGERED, Color.YELLOW);
+        fireballCooldownTimer = FIREBALL_COOLDOWN;
+    }
+
+    /**
+     * 立刻施放一次強化火球，不消耗一般火球冷卻。
+     * 由火焰卷軸道具呼叫。
+     */
+    public void castEmpoweredFireball() {
+        spawnFireball(26.0, 430.0, EMPOWERED_FIREBALL_DAMAGE,
+                      Color.DARKORANGE, Color.WHITE);
+    }
+
+    /**
+     * 依目前面向產生火球。
+     */
+    private void spawnFireball(double fireballSize, double speed, int damage,
+                               Color fillColor, Color strokeColor) {
+        double dirX = facingDirection.dx;
+        double dirY = facingDirection.dy;
+
+        double spawnX = switch (facingDirection) {
+            case LEFT  -> x - fireballSize;
+            case RIGHT -> x + width;
+            case UP, DOWN -> x + (width - fireballSize) / 2.0;
+        };
+        double spawnY = switch (facingDirection) {
+            case UP    -> y - fireballSize;
+            case DOWN  -> y + height;
+            case LEFT, RIGHT -> y + (height - fireballSize) / 2.0;
+        };
+
+        fireballs.add(new Fireball(spawnX, spawnY, dirX, dirY,
+                                   fireballSize, speed, damage, fillColor, strokeColor));
+    }
+
+    /**
+     * 使用最近按下的方向鍵更新面向；S 不移動，只用於向下施法瞄準。
+     *
+     * @param key 被按下的按鍵
+     */
+    private void updateFacingDirectionFromKey(KeyCode key) {
+        switch (key) {
+            case A -> {
+                facingRight = false;
+                facingDirection = Direction.LEFT;
+            }
+            case D -> {
+                facingRight = true;
+                facingDirection = Direction.RIGHT;
+            }
+            case W -> facingDirection = Direction.UP;
+            case S -> facingDirection = Direction.DOWN;
+            default -> {
+                // 其他按鍵不改變面向
+            }
+        }
     }
 
     // ── 受傷 ─────────────────────────────────────────────────────────────────
@@ -279,6 +398,11 @@ public class Player extends Entity {
         // 攻擊判定框（除錯視覺化，待換成動畫後可移除）
         if (isAttacking && attackBox != null) {
             drawAttackBox(gc);
+        }
+
+        // 火球投射物
+        for (Fireball fireball : fireballs) {
+            fireball.draw(gc);
         }
 
         // 血量條永遠顯示
@@ -355,6 +479,9 @@ public class Player extends Entity {
     /** 回傳面向是否為右方 */
     public boolean isFacingRight()  { return facingRight; }
 
+    /** 回傳目前四方向面向 */
+    public Direction getFacingDirection() { return facingDirection; }
+
     /** 回傳目前是否正在攻擊 */
     public boolean isAttacking()    { return isAttacking; }
 
@@ -379,6 +506,40 @@ public class Player extends Entity {
     /** 回傳目前是否處於無敵狀態 */
     public boolean isInvincible()   { return invincibleTimer > 0; }
 
+    /** 回傳玩家目前所有火球，供場景進行碰撞判定 */
+    public List<Fireball> getFireballs() { return fireballs; }
+
+    /** 回傳火球術是否可施放 */
+    public boolean canCastFireball() { return fireballCooldownTimer <= 0; }
+
+    /** 回傳火球術剩餘冷卻秒數 */
+    public double getFireballCooldownTimer() { return fireballCooldownTimer; }
+
+    /**
+     * 將玩家還原到關卡 checkpoint 起點。
+     * 清除暫態輸入、攻擊、火球與無敵狀態，避免死亡前狀態污染重生後的關卡。
+     */
+    public void resetForCheckpoint(double startX, double startY, int checkpointHp) {
+        x = startX;
+        y = startY;
+        velocityX = 0;
+        velocityY = 0;
+        hp = Math.max(0, Math.min(checkpointHp, maxHp));
+        isOnGround = false;
+        facingRight = true;
+        facingDirection = Direction.RIGHT;
+        isAttacking = false;
+        attackLanded = false;
+        attackBox = null;
+        attackTimer = 0;
+        fireballs.clear();
+        fireballCooldownTimer = 0;
+        invincibleTimer = 0;
+        flickerTimer = 0;
+        flickerVisible = true;
+        activeKeys.clear();
+    }
+
     /**
      * 由碰撞解析設定地面狀態。
      * 落地時傳入 true 並將 velocityY 歸零；離地時傳入 false。
@@ -389,6 +550,24 @@ public class Player extends Entity {
         this.isOnGround = onGround;
         if (onGround && velocityY > 0) {
             velocityY = 0;  // 落地時清除下落速度
+        }
+    }
+
+    /**
+     * 四方向面向，用於火球術發射方向。
+     */
+    public enum Direction {
+        LEFT(-1, 0),
+        RIGHT(1, 0),
+        UP(0, -1),
+        DOWN(0, 1);
+
+        private final double dx;
+        private final double dy;
+
+        Direction(double dx, double dy) {
+            this.dx = dx;
+            this.dy = dy;
         }
     }
 }

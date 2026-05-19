@@ -13,8 +13,19 @@ import javafx.stage.Stage;
 import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.Main;
 import ncu.cs2.my_game.entity.Enemy;
+import ncu.cs2.my_game.entity.Fireball;
 import ncu.cs2.my_game.entity.Player;
+import ncu.cs2.my_game.item.Inventory;
+import ncu.cs2.my_game.item.PickupItem;
+import ncu.cs2.my_game.item.PickupType;
+import ncu.cs2.my_game.item.UseContext;
 import ncu.cs2.my_game.physics.Collision;
+import ncu.cs2.my_game.state.EnemySnapshot;
+import ncu.cs2.my_game.state.StageSnapshot;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
 
 /**
  * 第二關場景，繼承 AnimationTimer 充當遊戲迴圈。
@@ -82,6 +93,21 @@ public class Level2Scene extends AnimationTimer {
      * 血量歸零後 isAlive() 回傳 false，不再更新或繪製。
      */
     private final Enemy[] enemies;
+
+    /** 可撿取道具列表 */
+    private final List<PickupItem> pickupItems;
+
+    /** 跨關卡背包 */
+    private final Inventory inventory;
+
+    /** 敵人掉落是否已處理 */
+    private final boolean[] enemyDropsHandled;
+
+    /** 掉落用亂數 */
+    private final Random random;
+
+    /** 關卡剛進入時的狀態快照 */
+    private final StageSnapshot initialSnapshot;
 
     /**
      * 加血道具碰撞框。
@@ -160,24 +186,37 @@ public class Level2Scene extends AnimationTimer {
 
         // ── 敵人（每個敵人的巡邏範圍對應所在平台邊界） ───────────────────────
         // 巡邏右邊界 = 平台右端 - 敵人寬度，確保不會走出平台
-        enemies = new Enemy[] {
-            // 敵人1：在 P2（x=230..330）上巡邏，右邊界=330-28=302
-            new Enemy(260, 430 - Enemy.ENEMY_H, 230, 302),
+        List<EnemySnapshot> enemySnapshots = new ArrayList<>();
+        enemySnapshots.add(new EnemySnapshot(260, 430 - Enemy.ENEMY_H, 230, 302));
+        enemySnapshots.add(new EnemySnapshot(270, 275 - Enemy.ENEMY_H, 240, 322));
+        enemySnapshots.add(new EnemySnapshot(310, 165 - Enemy.ENEMY_H, 280, 362));
+        enemies = createEnemies(enemySnapshots);
 
-            // 敵人2：在 P5（x=240..350）上巡邏，右邊界=350-28=322
-            new Enemy(270, 275 - Enemy.ENEMY_H, 240, 322),
+        pickupItems = new ArrayList<>();
+        inventory = Main.getInventory();
+        enemyDropsHandled = new boolean[enemies.length];
+        random = new Random();
 
-            // 敵人3：在 P7（x=280..390）上巡邏，右邊界=390-28=362
-            new Enemy(310, 165 - Enemy.ENEMY_H, 280, 362),
-        };
+        // 示範地板道具：玩家碰到後進背包，按 1-5 使用
+        pickupItems.add(PickupType.SMALL_POTION.create(95, 500 - PickupItem.SIZE));
+        pickupItems.add(PickupType.FIRE_SCROLL.create(455, 355 - PickupItem.SIZE));
+        pickupItems.add(PickupType.BOMB.create(545, 150 - PickupItem.SIZE));
 
         // ── 加血道具（放在 P3 中央偏右，玩家進到 P3 後容易看到）───────────────
         // P3 頂面 y=355，道具底部對齊平台：item.y = 355 - ITEM_SIZE = 335
         healthItem = new Rectangle2D(460, 355 - ITEM_SIZE, ITEM_SIZE, ITEM_SIZE);
 
+        initialSnapshot = new StageSnapshot(
+            player.getX(), player.getY(), player.getHp(),
+            inventory, pickupItems, enemySnapshots,
+            true, healthItem.getMinX(), healthItem.getMinY(),
+            healthItem.getWidth(), healthItem.getHeight()
+        );
+
         // ── 綁定鍵盤事件 ──────────────────────────────────────────────────────
         javafxScene.setOnKeyPressed(e -> {
             player.handleKeyPressed(e.getCode());
+            handleInventoryKey(e.getCode());
             if (e.getCode() == KeyCode.R && !player.isAlive()) {
                 rKeyPressed = true;
             }
@@ -237,10 +276,7 @@ public class Level2Scene extends AnimationTimer {
         if (!player.isAlive()) {
             if (rKeyPressed && !transitioning) {
                 rKeyPressed   = false;
-                transitioning = true;
-                this.stop();
-                Main.setPersistedHp(Config.PLAYER_MAX_HP);
-                Main.startLevel2();
+                rollbackToInitialSnapshot();
             }
             return;
         }
@@ -268,14 +304,76 @@ public class Level2Scene extends AnimationTimer {
         // 6. 玩家攻擊命中敵人
         checkPlayerAttackVsEnemies();
 
-        // 7. 敵人接觸傷害玩家
+        // 7. 玩家火球命中敵人或撞到地形
+        checkPlayerFireballs();
+
+        // 8. 敵人接觸傷害玩家
         checkEnemyContactVsPlayer();
 
-        // 8. 加血道具拾取
+        // 9. 敵人死亡掉落
+        checkEnemyDrops();
+
+        // 10. 地板道具拾取
+        checkPickupItems();
+
+        // 11. 加血道具拾取
         checkHealthItem();
 
-        // 9. 終點門判定
+        // 12. 終點門判定
         checkGoalDoor();
+    }
+
+    /**
+     * 使用背包快捷鍵。
+     */
+    private void handleInventoryKey(KeyCode key) {
+        PickupType type = switch (key) {
+            case DIGIT1 -> PickupType.SMALL_POTION;
+            case DIGIT2 -> PickupType.LARGE_POTION;
+            case DIGIT3 -> PickupType.FIRE_SCROLL;
+            case DIGIT4 -> PickupType.BOMB;
+            case DIGIT5 -> PickupType.ICE_SCROLL;
+            default -> null;
+        };
+        if (type != null) {
+            inventory.use(type, new UseContext(player, enemies, null));
+        }
+    }
+
+    /**
+     * 依快照建立敵人陣列。
+     */
+    private Enemy[] createEnemies(List<EnemySnapshot> snapshots) {
+        Enemy[] result = new Enemy[snapshots.size()];
+        for (int i = 0; i < snapshots.size(); i++) {
+            result[i] = snapshots.get(i).createEnemy();
+        }
+        return result;
+    }
+
+    /**
+     * 死亡重生時回滾到剛進入 Level2 的狀態。
+     */
+    private void rollbackToInitialSnapshot() {
+        player.resetForCheckpoint(initialSnapshot.getPlayerX(),
+                                  initialSnapshot.getPlayerY(),
+                                  initialSnapshot.getPlayerHp());
+        initialSnapshot.restoreInventory(inventory);
+
+        EnemySnapshot[] snapshots = initialSnapshot.getEnemySnapshots();
+        for (int i = 0; i < snapshots.length; i++) {
+            enemies[i] = snapshots[i].createEnemy();
+            enemyDropsHandled[i] = false;
+        }
+
+        pickupItems.clear();
+        pickupItems.addAll(initialSnapshot.createPickupItems());
+        healthItem = initialSnapshot.hasHealthItem()
+            ? new Rectangle2D(initialSnapshot.getHealthItemX(),
+                              initialSnapshot.getHealthItemY(),
+                              initialSnapshot.getHealthItemWidth(),
+                              initialSnapshot.getHealthItemHeight())
+            : null;
     }
 
     /**
@@ -358,6 +456,50 @@ public class Level2Scene extends AnimationTimer {
     }
 
     /**
+     * 檢查玩家火球是否命中敵人、地板或平台。
+     * 火球命中第一個敵人後造成傷害並消失；撞到地形也會消失。
+     */
+    private void checkPlayerFireballs() {
+        for (Fireball fireball : player.getFireballs()) {
+            if (!fireball.isAlive()) continue;
+
+            boolean consumed = false;
+            for (Enemy enemy : enemies) {
+                if (!enemy.isAlive()) continue;
+                if (Collision.checkAABB(fireball.getHitbox(), enemy.getHitbox())) {
+                    enemy.takeDamage(fireball.getDamage());
+                    fireball.destroy();
+                    consumed = true;
+                    break;
+                }
+            }
+
+            if (!consumed) {
+                destroyFireballOnWall(fireball);
+            }
+        }
+    }
+
+    /**
+     * 火球撞到地板或任一平台時消失。
+     *
+     * @param fireball 要檢查的火球
+     */
+    private void destroyFireballOnWall(Fireball fireball) {
+        if (Collision.checkAABB(fireball.getHitbox(), ground)) {
+            fireball.destroy();
+            return;
+        }
+
+        for (Rectangle2D platform : platforms) {
+            if (Collision.checkAABB(fireball.getHitbox(), platform)) {
+                fireball.destroy();
+                return;
+            }
+        }
+    }
+
+    /**
      * 檢查存活敵人與玩家的碰撞框重疊，嘗試對玩家施加接觸傷害。
      * 每個敵人各自維護傷害冷卻，互不影響。
      * 玩家側由 Player.takeDamage() 的無敵機制防止重複扣血。
@@ -370,6 +512,53 @@ public class Level2Scene extends AnimationTimer {
                 enemy.tryDamagePlayer(player);
             }
         }
+    }
+
+    /**
+     * 普通敵人死亡時依機率產生道具掉落。
+     */
+    private void checkEnemyDrops() {
+        for (int i = 0; i < enemies.length; i++) {
+            Enemy enemy = enemies[i];
+            if (enemyDropsHandled[i] || enemy.isAlive()) continue;
+
+            enemyDropsHandled[i] = true;
+            PickupType drop = rollEnemyDrop();
+            if (drop != null) {
+                spawnPickup(drop, enemy.getX(), enemy.getY() + enemy.getHeight() - PickupItem.SIZE);
+            }
+        }
+    }
+
+    /**
+     * 普通敵人掉落規則：小藥水較常見，卷軸低機率。
+     */
+    private PickupType rollEnemyDrop() {
+        double value = random.nextDouble();
+        if (value < 0.40) return PickupType.SMALL_POTION;
+        if (value < 0.48) return PickupType.FIRE_SCROLL;
+        if (value < 0.53) return PickupType.ICE_SCROLL;
+        return null;
+    }
+
+    private void spawnPickup(PickupType type, double x, double y) {
+        double px = Math.max(0, Math.min(x, Config.WINDOW_WIDTH - PickupItem.SIZE));
+        double py = Math.max(0, Math.min(y, Config.WINDOW_HEIGHT - Config.GROUND_THICKNESS - PickupItem.SIZE));
+        pickupItems.add(type.create(px, py));
+    }
+
+    /**
+     * 玩家碰到地板道具時撿進背包。
+     */
+    private void checkPickupItems() {
+        for (PickupItem item : pickupItems) {
+            if (item.isPickedUp()) continue;
+            if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
+                inventory.add(item.getType());
+                item.markPickedUp();
+            }
+        }
+        pickupItems.removeIf(PickupItem::isPickedUp);
     }
 
     /**
@@ -436,21 +625,26 @@ public class Level2Scene extends AnimationTimer {
         // 4. 加血道具（TODO: 換成精靈圖）
         drawHealthItem(gc);
 
-        // 5. 終點門（TODO: 換成門的精靈圖與開門動畫）
+        // 5. 可撿取地板道具
+        for (PickupItem item : pickupItems) {
+            item.draw(gc);
+        }
+
+        // 6. 終點門（TODO: 換成門的精靈圖與開門動畫）
         drawGoalDoor(gc);
 
-        // 6. 所有存活的敵人
+        // 7. 所有存活的敵人
         for (Enemy enemy : enemies) {
             enemy.draw(gc);
         }
 
-        // 7. 玩家（最後繪製，顯示在最上層）
+        // 8. 玩家（最後繪製，顯示在最上層）
         player.draw(gc);
 
-        // 8. HUD：左上角血量條
+        // 9. HUD：左上角血量條
         drawHUD(gc);
 
-        // 9. 玩家死亡後疊加 GAME OVER 畫面
+        // 10. 玩家死亡後疊加 GAME OVER 畫面
         if (!player.isAlive()) {
             drawGameOverOverlay(gc);
         }
@@ -594,5 +788,34 @@ public class Level2Scene extends AnimationTimer {
         gc.setFill(Color.LIGHTGRAY);
         gc.setFont(Font.font(12));
         gc.fillText("LEVEL 2", Config.WINDOW_WIDTH / 2.0 - 27, 20);
+
+        drawFireballCooldownHUD(gc);
+        drawInventoryHUD(gc);
+    }
+
+    /**
+     * 繪製火球術冷卻。
+     */
+    private void drawFireballCooldownHUD(GraphicsContext gc) {
+        gc.setFill(Color.WHITE);
+        gc.setFont(Font.font(12));
+        String text = player.canCastFireball()
+            ? "Fireball: Ready"
+            : "Fireball: " + String.format("%.1fs", player.getFireballCooldownTimer());
+        gc.fillText(text, 12, 48);
+    }
+
+    /**
+     * 依 Inventory/PickupType 自動繪製背包數量。
+     */
+    private void drawInventoryHUD(GraphicsContext gc) {
+        gc.setFill(Color.WHITE);
+        gc.setFont(Font.font(11));
+        double x = 12;
+        double y = Config.WINDOW_HEIGHT - 62;
+        for (PickupType type : inventory.getDisplayTypes()) {
+            gc.fillText(type.getHudLabel() + ": " + inventory.getCount(type), x, y);
+            y += 12;
+        }
     }
 }

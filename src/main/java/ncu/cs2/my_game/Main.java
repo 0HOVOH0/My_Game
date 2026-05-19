@@ -8,6 +8,7 @@ import ncu.cs2.my_game.scene.BossScene;
 import ncu.cs2.my_game.scene.GameScene;
 import ncu.cs2.my_game.scene.Level1Scene;
 import ncu.cs2.my_game.scene.Level2Scene;
+import ncu.cs2.my_game.item.Inventory;
 
 import java.io.IOException;
 
@@ -33,6 +34,9 @@ public class Main extends Application {
      * player.setHp(getPersistedHp()) 恢復。
      */
     private static int persistedHp = Config.PLAYER_MAX_HP;
+
+    /** 跨 Level2 與 Boss 關保留的簡易背包 */
+    private static Inventory inventory = new Inventory();
 
     /**
      * JavaFX 啟動方法，初始化視窗並載入主選單場景
@@ -83,6 +87,7 @@ public class Main extends Application {
      */
     public static void startLevel1() {
         persistedHp     = Config.PLAYER_MAX_HP;
+        inventory       = new Inventory();
         gameStartMillis = System.currentTimeMillis();
         new Level1Scene(primaryStage);
     }
@@ -138,6 +143,11 @@ public class Main extends Application {
      */
     public static void setPersistedHp(int hp) {
         persistedHp = Math.max(1, Math.min(hp, Config.PLAYER_MAX_HP));
+    }
+
+    /** 回傳跨關卡背包 */
+    public static Inventory getInventory() {
+        return inventory;
     }
 
     /** 程式進入點 */

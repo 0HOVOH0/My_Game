@@ -10,6 +10,7 @@ import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.entity.Boss;
+import ncu.cs2.my_game.entity.Fireball;
 import ncu.cs2.my_game.entity.Player;
 import ncu.cs2.my_game.fsm.BossState;
 import ncu.cs2.my_game.physics.Collision;
@@ -115,6 +116,9 @@ public class GameScene {
             boss.takeDamage(Player.ATTACK_DAMAGE);
         }
 
+        // ── 4.5 玩家火球命中 Boss 或地板 ─────────────────────────────────────
+        checkPlayerFireballs();
+
         // ── 5. Boss DASH 衝刺命中玩家 ─────────────────────────────────────────
         Rectangle2D dashBox = boss.getAttackBox();
         if (dashBox != null &&
@@ -123,11 +127,34 @@ public class GameScene {
         }
 
         // ── 6. Boss 投射物命中玩家 ─────────────────────────────────────────────
-        for (Boss.Projectile p : boss.getProjectiles()) {
+        for (Fireball p : boss.getProjectiles()) {
             if (!p.isAlive()) continue;
+            if (Collision.checkAABB(p.getHitbox(), ground)) {
+                p.destroy();
+                continue;
+            }
             if (Collision.checkAABB(p.getHitbox(), player.getHitbox())) {
                 player.takeDamage(p.getDamage());
                 p.destroy();   // 命中後消滅，下幀由 Boss.update() 清除
+            }
+        }
+    }
+
+    /**
+     * 開發用場景中的火球碰撞判定：命中 Boss 或地板後消失。
+     */
+    private void checkPlayerFireballs() {
+        for (Fireball fireball : player.getFireballs()) {
+            if (!fireball.isAlive()) continue;
+
+            if (Collision.checkAABB(fireball.getHitbox(), boss.getHitbox())) {
+                boss.takeDamage(fireball.getDamage());
+                fireball.destroy();
+                continue;
+            }
+
+            if (Collision.checkAABB(fireball.getHitbox(), ground)) {
+                fireball.destroy();
             }
         }
     }

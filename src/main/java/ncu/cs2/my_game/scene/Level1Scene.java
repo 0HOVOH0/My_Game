@@ -12,6 +12,7 @@ import javafx.scene.text.Font;
 import javafx.stage.Stage;
 import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.Main;
+import ncu.cs2.my_game.entity.Fireball;
 import ncu.cs2.my_game.entity.Player;
 import ncu.cs2.my_game.physics.Collision;
 
@@ -229,7 +230,10 @@ public class Level1Scene extends AnimationTimer {
         if (player.getX() + player.getWidth() > Config.WINDOW_WIDTH)
             player.setX(Config.WINDOW_WIDTH - player.getWidth());
 
-        // 4. 終點門：碰到後停止迴圈並切換場景
+        // 4. 火球碰到地板或平台後消失
+        checkPlayerFireballsVsWalls();
+
+        // 5. 終點門：碰到後停止迴圈並切換場景
         checkGoalDoor();
     }
 
@@ -274,6 +278,28 @@ public class Level1Scene extends AnimationTimer {
             Main.setPersistedHp(player.getHp());   // 帶入血量到 Level2
             this.stop();
             Main.startLevel2();
+        }
+    }
+
+    /**
+     * 檢查玩家火球是否撞到地板或平台。
+     * Level1 沒有敵人，因此火球只需要處理牆面/地形消失。
+     */
+    private void checkPlayerFireballsVsWalls() {
+        for (Fireball fireball : player.getFireballs()) {
+            if (!fireball.isAlive()) continue;
+
+            if (Collision.checkAABB(fireball.getHitbox(), ground)) {
+                fireball.destroy();
+                continue;
+            }
+
+            for (Rectangle2D platform : platforms) {
+                if (Collision.checkAABB(fireball.getHitbox(), platform)) {
+                    fireball.destroy();
+                    break;
+                }
+            }
         }
     }
 
@@ -429,5 +455,19 @@ public class Level1Scene extends AnimationTimer {
         gc.setFill(Color.LIGHTGRAY);
         gc.setFont(Font.font(12));
         gc.fillText("LEVEL 1", Config.WINDOW_WIDTH / 2.0 - 25, 20);
+
+        drawFireballCooldownHUD(gc);
+    }
+
+    /**
+     * 繪製火球術冷卻。
+     */
+    private void drawFireballCooldownHUD(GraphicsContext gc) {
+        gc.setFill(Color.WHITE);
+        gc.setFont(Font.font(12));
+        String text = player.canCastFireball()
+            ? "Fireball: Ready"
+            : "Fireball: " + String.format("%.1fs", player.getFireballCooldownTimer());
+        gc.fillText(text, 12, 48);
     }
 }

@@ -31,6 +31,12 @@ public class BossStateMachine extends StateMachine<BossState> {
     /** RAGE 射擊間隔（秒） */
     private static final double RAGE_FIRE_INTERVAL = 1.5;
 
+    /** Boss 可施放遠程火球的最大距離 */
+    private static final double CAST_RANGE = 560.0;
+
+    /** 玩家偏遠時的施法降頻距離 */
+    private static final double FAR_CAST_RANGE = 380.0;
+
     /** DASH 結束後的冷卻時間（秒）；防止返回 CHASE 後立即再次衝刺 */
     private static final double DASH_COOLDOWN = 2.5;
 
@@ -69,6 +75,9 @@ public class BossStateMachine extends StateMachine<BossState> {
     /** RAGE 狀態的射擊累計計時器（秒），進入 RAGE 時歸零 */
     private double rageFireTimer;
 
+    /** 一般遠程施法冷卻（秒） */
+    private double spellCooldown;
+
     /** DASH 冷卻剩餘時間（秒）；> 0 時 CHASE 不會觸發 DASH */
     private double dashCooldown = 0;
 
@@ -87,6 +96,7 @@ public class BossStateMachine extends StateMachine<BossState> {
         this.player           = player;
         this.onFireProjectile = onFireProjectile;
         this.rageFireTimer    = 0.0;
+        this.spellCooldown    = randomSpellCooldown(0);
     }
 
     // ── update ────────────────────────────────────────────────────────────────
@@ -107,6 +117,7 @@ public class BossStateMachine extends StateMachine<BossState> {
 
         // DASH 冷卻遞減（在所有狀態中持續計時）
         if (dashCooldown > 0) dashCooldown -= deltaTime;
+        if (spellCooldown > 0) spellCooldown -= deltaTime;
 
         switch (currentState) {
             case IDLE  -> updateIdle();
@@ -159,7 +170,10 @@ public class BossStateMachine extends StateMachine<BossState> {
         // DASH：血量低於 60%、距離夠近，且冷卻結束才能衝刺
         if (distance < DASH_TRIGGER_RANGE && getHpRatio() < DASH_HP_THRESHOLD && dashCooldown <= 0) {
             transitionTo(BossState.DASH);
+            return;
         }
+
+        tryCastSpell(distance);
     }
 
     /**
@@ -195,6 +209,8 @@ public class BossStateMachine extends StateMachine<BossState> {
             rageFireTimer = 0;
             onFireProjectile.run();   // 通知外部產生投射物
         }
+
+        tryCastSpell(Math.abs(dx));
     }
 
     /**
@@ -252,5 +268,26 @@ public class BossStateMachine extends StateMachine<BossState> {
      */
     private double getHpRatio() {
         return (double) boss.getHp() / boss.getMaxHp();
+    }
+
+    /**
+     * 依玩家距離決定是否施放火球；距離太遠時停止施法，
+     * 偏遠時增加下一次施法冷卻。
+     */
+    private void tryCastSpell(double distance) {
+        if (distance > CAST_RANGE) return;
+        if (spellCooldown > 0) return;
+
+        onFireProjectile.run();
+        spellCooldown = randomSpellCooldown(distance);
+    }
+
+    /**
+     * 產生 1-3 秒基礎冷卻；玩家偏遠時額外增加 1.5 秒。
+     */
+    private double randomSpellCooldown(double distance) {
+        double cooldown = 1.0 + Math.random() * 2.0;
+        if (distance > FAR_CAST_RANGE) cooldown += 1.5;
+        return cooldown;
     }
 }

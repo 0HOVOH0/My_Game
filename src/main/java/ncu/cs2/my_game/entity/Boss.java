@@ -37,7 +37,7 @@ public class Boss extends Entity {
     private final BossStateMachine fsm;
 
     /** 目前存活的投射物列表；由 shootProjectile() 新增，update() 清除出界的 */
-    private final List<Projectile> projectiles;
+    private final List<Fireball> projectiles;
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -80,7 +80,7 @@ public class Boss extends Entity {
 
         // 4. 移除已出界或被消滅的投射物，再更新剩餘的
         projectiles.removeIf(p -> !p.isAlive());
-        for (Projectile p : projectiles) {
+        for (Fireball p : projectiles) {
             p.update(deltaTime);
         }
     }
@@ -105,14 +105,20 @@ public class Boss extends Entity {
      * 投射物從 Boss 的水平中心、垂直中心飛出，Y 軸固定不受重力影響。
      */
     public void shootProjectile() {
-        // 判斷玩家在 Boss 的左側或右側
-        double dirX    = (player.getX() + player.getWidth() / 2.0) > (x + width / 2.0) ? 1.0 : -1.0;
+        double bossCenterX = x + width / 2.0;
+        double bossCenterY = y + height / 2.0;
+        double playerCenterX = player.getX() + player.getWidth() / 2.0;
+        double playerCenterY = player.getY() + player.getHeight() / 2.0;
+        double dirX = playerCenterX - bossCenterX;
+        double dirY = playerCenterY - bossCenterY;
 
         // 生成位置：Boss 中心偏移以對齊投射物中心
-        double spawnX  = x + (width  - Projectile.SIZE) / 2.0;
-        double spawnY  = y + (height - Projectile.SIZE) / 2.0;
+        double size = 22.0;
+        double spawnX  = x + (width  - size) / 2.0;
+        double spawnY  = y + (height - size) / 2.0;
 
-        projectiles.add(new Projectile(spawnX, spawnY, dirX));
+        projectiles.add(new Fireball(spawnX, spawnY, dirX, dirY,
+                                     size, 280.0, 15, Color.PURPLE, Color.RED));
     }
 
     // ── 攻擊框 ───────────────────────────────────────────────────────────────
@@ -156,7 +162,7 @@ public class Boss extends Entity {
         drawStateLabel(gc);
 
         // 繪製所有存活的投射物
-        for (Projectile p : projectiles) {
+        for (Fireball p : projectiles) {
             p.draw(gc);
         }
     }
@@ -250,7 +256,7 @@ public class Boss extends Entity {
      * 命中玩家後請呼叫 {@link Projectile#destroy()} 標記消滅，
      * 下一幀 update() 的 removeIf 會自動清除。
      */
-    public List<Projectile> getProjectiles() { return projectiles; }
+    public List<Fireball> getProjectiles() { return projectiles; }
 
     // ═════════════════════════════════════════════════════════════════════════
     // Projectile 內部類別
