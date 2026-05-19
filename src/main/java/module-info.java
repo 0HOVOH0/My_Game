@@ -1,0 +1,15 @@
+module ncu.cs2.my_game {
+    requires javafx.controls;
+    requires javafx.fxml;
+    requires javafx.graphics;  // GraphicsContext、Rectangle2D 所需
+
+    opens ncu.cs2.my_game to javafx.fxml;
+    opens ncu.cs2.my_game.controller to javafx.fxml;
+
+    exports ncu.cs2.my_game;
+    exports ncu.cs2.my_game.entity;
+    exports ncu.cs2.my_game.physics;
+    exports ncu.cs2.my_game.controller;
+    exports ncu.cs2.my_game.scene;
+    exports ncu.cs2.my_game.fsm;
+}

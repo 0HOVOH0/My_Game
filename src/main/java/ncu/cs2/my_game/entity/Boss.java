@@ -1,0 +1,357 @@
+package ncu.cs2.my_game.entity;
+
+import javafx.geometry.Rectangle2D;
+import javafx.scene.canvas.GraphicsContext;
+import javafx.scene.paint.Color;
+import ncu.cs2.my_game.Config;
+import ncu.cs2.my_game.fsm.BossState;
+import ncu.cs2.my_game.fsm.BossStateMachine;
+import ncu.cs2.my_game.physics.Gravity;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Boss 實體，繼承 Entity，AI 行為由 BossStateMachine 驅動。
+ * 負責整合 FSM 更新、投射物生命週期管理，以及繪製邏輯。
+ */
+public class Boss extends Entity {
+
+    // ── 尺寸常數 ─────────────────────────────────────────────────────────────
+
+    /** Boss 碰撞框寬度（像素） */
+    public static final double BOSS_WIDTH  = 60.0;
+
+    /** Boss 碰撞框高度（像素） */
+    public static final double BOSS_HEIGHT = 80.0;
+
+    /** DASH 攻擊框在前方的延伸長度（像素） */
+    private static final double DASH_BOX_EXTENT = 40.0;
+
+    // ── 依賴 ─────────────────────────────────────────────────────────────────
+
+    /** 玩家參照；傳給 FSM 用於追蹤位置，以及決定投射物方向 */
+    private final Player player;
+
+    /** Boss 專屬有限狀態機，管理所有 AI 狀態轉換 */
+    private final BossStateMachine fsm;
+
+    /** 目前存活的投射物列表；由 shootProjectile() 新增，update() 清除出界的 */
+    private final List<Projectile> projectiles;
+
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * 建構子：建立 Boss 實體並初始化狀態機。
+     * FSM 的射擊回調直接指向 {@link #shootProjectile()}，
+     * 使 RAGE 狀態可在不知道外部容器的情況下觸發投射物。
+     *
+     * @param x      初始 X 座標
+     * @param y      初始 Y 座標
+     * @param player 玩家參照（FSM 追蹤位置用）
+     */
+    public Boss(double x, double y, Player player) {
+        super(x, y, BOSS_WIDTH, BOSS_HEIGHT, Config.BOSS_MAX_HP);
+        this.player      = player;
+        this.projectiles = new ArrayList<>();
+        // 將 this::shootProjectile 傳入 FSM，讓 RAGE 狀態直接呼叫
+        this.fsm         = new BossStateMachine(this, player, this::shootProjectile);
+    }
+
+    // ── update ────────────────────────────────────────────────────────────────
+
+    /**
+     * 每幀更新：FSM → 重力 → 位移 → 投射物清理。
+     * FSM 負責設定 velocityX；重力修改 velocityY；最後整合位移。
+     *
+     * @param deltaTime 時間差（秒）
+     */
+    @Override
+    public void update(double deltaTime) {
+        // 1. FSM 決定水平速度與狀態轉換
+        fsm.update(deltaTime);
+
+        // 2. 套用重力（累加 velocityY）
+        Gravity.apply(this, deltaTime);
+
+        // 3. 依速度更新座標
+        x += velocityX * deltaTime;
+        y += velocityY * deltaTime;
+
+        // 4. 移除已出界或被消滅的投射物，再更新剩餘的
+        projectiles.removeIf(p -> !p.isAlive());
+        for (Projectile p : projectiles) {
+            p.update(deltaTime);
+        }
+    }
+
+    // ── 受傷 ─────────────────────────────────────────────────────────────────
+
+    /**
+     * 承受傷害：委派給 FSM 處理扣血與狀態切換。
+     * FSM 的 onHit() 會自動判斷是否切換至 HURT 或 DEAD。
+     *
+     * @param amount 傷害量（正整數）
+     */
+    public void takeDamage(int amount) {
+        fsm.onHit(amount);
+    }
+
+    // ── 投射物 ────────────────────────────────────────────────────────────────
+
+    /**
+     * 產生一顆朝玩家方向飛的投射物，加入 projectiles 列表。
+     * 由 BossStateMachine 的 RAGE 狀態透過回調觸發，每 1.5 秒一次。
+     * 投射物從 Boss 的水平中心、垂直中心飛出，Y 軸固定不受重力影響。
+     */
+    public void shootProjectile() {
+        // 判斷玩家在 Boss 的左側或右側
+        double dirX    = (player.getX() + player.getWidth() / 2.0) > (x + width / 2.0) ? 1.0 : -1.0;
+
+        // 生成位置：Boss 中心偏移以對齊投射物中心
+        double spawnX  = x + (width  - Projectile.SIZE) / 2.0;
+        double spawnY  = y + (height - Projectile.SIZE) / 2.0;
+
+        projectiles.add(new Projectile(spawnX, spawnY, dirX));
+    }
+
+    // ── 攻擊框 ───────────────────────────────────────────────────────────────
+
+    /**
+     * 回傳 Boss 當前的攻擊判定框。
+     * 只有 DASH 狀態才有攻擊框（衝刺撞擊判定）；其他狀態回傳 null。
+     * 攻擊框延伸到 Boss 前方 {@value #DASH_BOX_EXTENT} 像素處。
+     *
+     * @return DASH 中的攻擊矩形，或 null
+     */
+    public Rectangle2D getAttackBox() {
+        if (fsm.getCurrentState() != BossState.DASH) return null;
+
+        // 依 velocityX 決定衝刺方向；若速度恰好為 0 則以玩家位置判斷
+        boolean movingRight = (velocityX != 0) ? velocityX > 0
+                                               : player.getX() > x;
+        double boxX = movingRight ? x + width : x - DASH_BOX_EXTENT;
+        return new Rectangle2D(boxX, y, DASH_BOX_EXTENT, height);
+    }
+
+    // ── draw ─────────────────────────────────────────────────────────────────
+
+    /**
+     * 繪製 Boss 本體、血量條、狀態標籤，以及所有存活的投射物。
+     *
+     * @param gc 畫布繪圖上下文
+     */
+    @Override
+    public void draw(GraphicsContext gc) {
+        // 死亡後只顯示灰色殘影，不繪製其他 UI
+        if (!isAlive()) {
+            gc.setFill(Color.DARKGRAY);
+            gc.fillRect(x, y, width, height);
+            return;
+        }
+
+        drawBody(gc);
+        drawAttackBoxDebug(gc);
+        drawHpBar(gc);
+        drawStateLabel(gc);
+
+        // 繪製所有存活的投射物
+        for (Projectile p : projectiles) {
+            p.draw(gc);
+        }
+    }
+
+    /**
+     * 繪製 Boss 主體矩形。顏色依狀態切換以提供視覺回饋。
+     * TODO: 動畫精靈圖待實作，目前以純色矩形代替。
+     *
+     * @param gc 畫布繪圖上下文
+     */
+    private void drawBody(GraphicsContext gc) {
+        // 依狀態選擇顏色
+        Color bodyColor = switch (fsm.getCurrentState()) {
+            case IDLE  -> Color.SLATEGRAY;
+            case CHASE -> Color.ORANGERED;
+            case DASH  -> Color.GOLD;
+            case RAGE  -> Color.CRIMSON;
+            case HURT  -> Color.WHITE;
+            case DEAD  -> Color.DARKGRAY;
+        };
+
+        // TODO: 依 facingRight 與動作狀態切換精靈圖幀
+        gc.setFill(bodyColor);
+        gc.fillRect(x, y, width, height);
+
+        // 以眼睛指示面向（待精靈圖後移除）
+        boolean facingRight = (player.getX() + player.getWidth() / 2.0) > (x + width / 2.0);
+        gc.setFill(Color.BLACK);
+        double eyeX = facingRight ? x + width - 18 : x + 10;
+        gc.fillOval(eyeX, y + 16, 10, 10);
+    }
+
+    /**
+     * DASH 狀態下繪製攻擊框（半透明金色），用於除錯確認判定位置。
+     * TODO: 換成衝刺特效後可移除。
+     *
+     * @param gc 畫布繪圖上下文
+     */
+    private void drawAttackBoxDebug(GraphicsContext gc) {
+        Rectangle2D atkBox = getAttackBox();
+        if (atkBox == null) return;
+
+        gc.save();
+        gc.setGlobalAlpha(0.4);
+        gc.setFill(Color.GOLD);
+        gc.fillRect(atkBox.getMinX(), atkBox.getMinY(),
+                    atkBox.getWidth(), atkBox.getHeight());
+        gc.restore();
+    }
+
+    /**
+     * 在 Boss 頭頂繪製血量條；顏色隨血量比例從綠漸變至紅。
+     *
+     * @param gc 畫布繪圖上下文
+     */
+    private void drawHpBar(GraphicsContext gc) {
+        final double barH = 8;
+        final double barY = y - barH - 4;
+
+        // 背景（深紅底）
+        gc.setFill(Color.DARKRED);
+        gc.fillRect(x, barY, width, barH);
+
+        // 前景依血量比例變色
+        double ratio    = (double) hp / maxHp;
+        Color  barColor = ratio > 0.60 ? Color.LIMEGREEN
+                        : ratio > 0.30 ? Color.ORANGE
+                                       : Color.RED;
+        gc.setFill(barColor);
+        gc.fillRect(x, barY, width * ratio, barH);
+    }
+
+    /**
+     * 在血量條上方顯示當前 FSM 狀態名稱（除錯用）。
+     * TODO: 換成動畫後移除。
+     *
+     * @param gc 畫布繪圖上下文
+     */
+    private void drawStateLabel(GraphicsContext gc) {
+        gc.setFill(Color.LIGHTYELLOW);
+        gc.fillText(fsm.getCurrentState().name(), x + 2, y - 14);
+    }
+
+    // ── Getter ────────────────────────────────────────────────────────────────
+
+    /** 回傳目前 FSM 狀態（供 GameScene 判斷勝負條件） */
+    public BossState getCurrentState() { return fsm.getCurrentState(); }
+
+    /**
+     * 回傳所有存活的投射物列表（供 GameScene 做玩家碰撞判定）。
+     * 命中玩家後請呼叫 {@link Projectile#destroy()} 標記消滅，
+     * 下一幀 update() 的 removeIf 會自動清除。
+     */
+    public List<Projectile> getProjectiles() { return projectiles; }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // Projectile 內部類別
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Boss 發射的投射物。
+     * 沿水平方向飛行，飛出畫面邊界後自動標記為消滅。
+     * 設計為 {@code public static} 以便 GameScene 直接存取碰撞與傷害資訊。
+     */
+    public static class Projectile {
+
+        /** 投射物的方形尺寸（像素） */
+        public static final double SIZE   = 16.0;
+
+        /** 飛行速度（像素 / 秒） */
+        public static final double SPEED  = 300.0;
+
+        /** 命中玩家造成的傷害值 */
+        public static final int    DAMAGE = 15;
+
+        // ── 狀態 ──────────────────────────────────────────────────────────────
+
+        /** 目前 X 座標（左上角） */
+        private double x;
+
+        /** 目前 Y 座標（左上角），水平飛行故不隨重力改變 */
+        private double y;
+
+        /** 飛行方向：+1.0 = 向右，-1.0 = 向左 */
+        private final double dirX;
+
+        /** 是否仍存活；false 時由 Boss.update() 移除 */
+        private boolean alive;
+
+        // ─────────────────────────────────────────────────────────────────────
+
+        /**
+         * 建構子：設定初始位置與飛行方向。
+         *
+         * @param x    初始 X 座標
+         * @param y    初始 Y 座標
+         * @param dirX 飛行方向（+1 向右，-1 向左）
+         */
+        public Projectile(double x, double y, double dirX) {
+            this.x     = x;
+            this.y     = y;
+            this.dirX  = dirX;
+            this.alive = true;
+        }
+
+        /**
+         * 每幀更新：沿 dirX 方向水平移動，超出畫面邊界時自我消滅。
+         *
+         * @param deltaTime 時間差（秒）
+         */
+        public void update(double deltaTime) {
+            x += dirX * SPEED * deltaTime;
+
+            // 超出左右邊界即消滅（上下不判定，投射物水平飛行）
+            if (x + SIZE < 0 || x > Config.WINDOW_WIDTH) {
+                alive = false;
+            }
+        }
+
+        /**
+         * 繪製投射物（橘紅色圓形）。
+         * TODO: 換成火球或魔法特效精靈圖。
+         *
+         * @param gc 畫布繪圖上下文
+         */
+        public void draw(GraphicsContext gc) {
+            if (!alive) return;
+            gc.setFill(Color.ORANGERED);
+            gc.fillOval(x, y, SIZE, SIZE);
+
+            // 繪製發光外框增強辨識度
+            gc.setStroke(Color.YELLOW);
+            gc.setLineWidth(1.5);
+            gc.strokeOval(x, y, SIZE, SIZE);
+        }
+
+        /**
+         * 取得投射物的軸對齊碰撞框（AABB），供碰撞判定使用。
+         *
+         * @return 碰撞矩形
+         */
+        public Rectangle2D getHitbox() {
+            return new Rectangle2D(x, y, SIZE, SIZE);
+        }
+
+        /**
+         * 標記此投射物為已消滅（例如命中玩家後由 GameScene 呼叫）。
+         * 下一幀 Boss.update() 的 removeIf 會將其從列表移除。
+         */
+        public void destroy() { alive = false; }
+
+        /** 回傳投射物是否仍存活 */
+        public boolean isAlive() { return alive; }
+
+        /** 回傳命中傷害值 */
+        public int getDamage() { return DAMAGE; }
+    }
+}

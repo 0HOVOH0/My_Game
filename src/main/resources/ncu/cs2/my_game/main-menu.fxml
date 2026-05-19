@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.Button?>
+<?import javafx.geometry.Insets?>
+
+<StackPane xmlns="http://javafx.com/javafx/21"
+           xmlns:fx="http://javafx.com/fxml/1"
+           fx:controller="ncu.cs2.my_game.controller.MainMenuController"
+           style="-fx-background-color: #1a1a2e;">
+
+    <VBox alignment="CENTER" spacing="20">
+        <padding>
+            <Insets top="80" bottom="80" left="60" right="60"/>
+        </padding>
+
+        <!-- 遊戲標題 -->
+        <Label text="My Game"
+               style="-fx-font-size: 48px; -fx-font-weight: bold; -fx-text-fill: #e0e0ff;"/>
+
+        <!-- 開始遊戲按鈕 -->
+        <Button text="開始遊戲"
+                onAction="#onStartGame"
+                prefWidth="200" prefHeight="50"
+                style="-fx-font-size: 18px; -fx-background-color: #4a90e2; -fx-text-fill: white; -fx-background-radius: 8;"/>
+
+        <!-- 離開按鈕 -->
+        <Button text="離開"
+                onAction="#onExit"
+                prefWidth="200" prefHeight="50"
+                style="-fx-font-size: 18px; -fx-background-color: #555; -fx-text-fill: white; -fx-background-radius: 8;"/>
+    </VBox>
+
+</StackPane>

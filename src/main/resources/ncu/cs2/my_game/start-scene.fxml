@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.Button?>
+<?import javafx.geometry.Insets?>
+
+<StackPane xmlns="http://javafx.com/javafx/21"
+           xmlns:fx="http://javafx.com/fxml/1"
+           fx:controller="ncu.cs2.my_game.controller.StartSceneController"
+           style="-fx-background-color: #06080f;">
+
+    <VBox alignment="CENTER" spacing="18">
+        <padding>
+            <Insets top="80" bottom="80" left="80" right="80"/>
+        </padding>
+
+        <!-- 裝飾標籤 -->
+        <Label text="&lt; DARK  CONTINENT  ADVENTURE &gt;"
+               style="-fx-font-size: 13px; -fx-text-fill: #1a4060; -fx-font-family: monospace;"/>
+
+        <!-- 遊戲主標題 -->
+        <Label text="MY GAME"
+               style="-fx-font-size: 72px; -fx-font-weight: bold; -fx-text-fill: #00e5ff; -fx-font-family: monospace;"/>
+
+        <!-- 副標題 -->
+        <Label text="一場黑暗大陸的冒險"
+               style="-fx-font-size: 17px; -fx-text-fill: #2e6b8c;"/>
+
+        <!-- 間距 -->
+        <Label text="" prefHeight="28"/>
+
+        <!-- 開始遊戲按鈕 -->
+        <Button text="[ 開始遊戲 ]"
+                onAction="#onStartGame"
+                prefWidth="240" prefHeight="52"
+                style="-fx-font-size: 18px; -fx-font-family: monospace; -fx-background-color: #08151f; -fx-text-fill: #00e5ff; -fx-border-color: #00e5ff; -fx-border-width: 1.5; -fx-border-radius: 3; -fx-background-radius: 3; -fx-cursor: hand;"/>
+
+        <!-- 離開按鈕 -->
+        <Button text="[ 離開 ]"
+                onAction="#onExit"
+                prefWidth="240" prefHeight="52"
+                style="-fx-font-size: 18px; -fx-font-family: monospace; -fx-background-color: #08151f; -fx-text-fill: #2e5070; -fx-border-color: #1a3050; -fx-border-width: 1.5; -fx-border-radius: 3; -fx-background-radius: 3; -fx-cursor: hand;"/>
+
+        <!-- 底部說明 -->
+        <Label text="WASD 移動　Space / W 跳躍　J 攻擊"
+               style="-fx-font-size: 12px; -fx-text-fill: #1a3050; -fx-font-family: monospace;"/>
+    </VBox>
+
+</StackPane>
