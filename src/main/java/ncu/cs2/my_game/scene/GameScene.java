@@ -46,8 +46,7 @@ public class GameScene {
      */
     public void start() {
         Canvas canvas = new Canvas(Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
-        Pane   root   = new Pane(canvas);
-        Scene  scene  = new Scene(root, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
+        Scene  scene  = CanvasSceneSupport.createScaledCanvasScene(stage, canvas);
 
         // 初始化玩家與 Boss（Boss 需要 Player 參照供 FSM 追蹤）
         player = new Player(100, 300);
@@ -206,6 +205,8 @@ public class GameScene {
 
         // 玩家（最後畫，顯示在最上層）
         player.draw(gc);
+
+        HudRenderer.drawPlayerStatus(gc, player, "BOSS TEST");
 
         // 勝負提示
         drawOutcome(gc);

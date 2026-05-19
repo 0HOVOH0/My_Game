@@ -12,13 +12,13 @@ import ncu.cs2.my_game.Config;
 public class Fireball {
 
     /** 火球尺寸（像素） */
-    public static final double SIZE = 18.0;
+    public static final double SIZE = Config.FIREBALL_SIZE;
 
     /** 火球飛行速度（像素 / 秒） */
-    public static final double SPEED = 360.0;
+    public static final double SPEED = Config.FIREBALL_SPEED;
 
     /** 命中敵人或 Boss 的傷害 */
-    public static final int DAMAGE = 25;
+    public static final int DAMAGE = Config.FIREBALL_DAMAGE;
 
     private double x;
     private double y;

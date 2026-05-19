@@ -15,6 +15,7 @@ public class StageSnapshot {
     private final double playerX;
     private final double playerY;
     private final int playerHp;
+    private final double playerMana;
     private final InventorySnapshot inventorySnapshot;
     private final List<PickupSnapshot> pickupSnapshots;
     private final List<EnemySnapshot> enemySnapshots;
@@ -24,7 +25,7 @@ public class StageSnapshot {
     private final double healthItemWidth;
     private final double healthItemHeight;
 
-    public StageSnapshot(double playerX, double playerY, int playerHp,
+    public StageSnapshot(double playerX, double playerY, int playerHp, double playerMana,
                          Inventory inventory,
                          List<PickupItem> pickupItems,
                          List<EnemySnapshot> enemySnapshots,
@@ -34,6 +35,7 @@ public class StageSnapshot {
         this.playerX = playerX;
         this.playerY = playerY;
         this.playerHp = playerHp;
+        this.playerMana = playerMana;
         this.inventorySnapshot = new InventorySnapshot(inventory);
         this.pickupSnapshots = snapshotPickups(pickupItems);
         this.enemySnapshots = new ArrayList<>(enemySnapshots);
@@ -65,6 +67,8 @@ public class StageSnapshot {
     public double getPlayerY() { return playerY; }
 
     public int getPlayerHp() { return playerHp; }
+
+    public double getPlayerMana() { return playerMana; }
 
     public boolean hasHealthItem() { return hasHealthItem; }
 

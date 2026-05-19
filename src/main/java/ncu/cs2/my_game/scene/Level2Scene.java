@@ -138,12 +138,12 @@ public class Level2Scene extends AnimationTimer {
         Canvas canvas = new Canvas(Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
         gc = canvas.getGraphicsContext2D();
 
-        Pane  root        = new Pane(canvas);
-        Scene javafxScene = new Scene(root, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
+        Scene javafxScene = CanvasSceneSupport.createScaledCanvasScene(stage, canvas);
 
         // ── 初始化玩家（帶入 Level1 結束時的血量） ────────────────────────────
         player = new Player(50, 440);
         player.setHp(Main.getPersistedHp());
+        player.setMana(Main.getPersistedMana());
 
         // ── 地板 ──────────────────────────────────────────────────────────────
         ground = new Rectangle2D(0, GROUND_Y, Config.WINDOW_WIDTH, Config.GROUND_THICKNESS);
@@ -207,7 +207,7 @@ public class Level2Scene extends AnimationTimer {
         healthItem = new Rectangle2D(460, 355 - ITEM_SIZE, ITEM_SIZE, ITEM_SIZE);
 
         initialSnapshot = new StageSnapshot(
-            player.getX(), player.getY(), player.getHp(),
+            player.getX(), player.getY(), player.getHp(), player.getMana(),
             inventory, pickupItems, enemySnapshots,
             true, healthItem.getMinX(), healthItem.getMinY(),
             healthItem.getWidth(), healthItem.getHeight()
@@ -357,7 +357,8 @@ public class Level2Scene extends AnimationTimer {
     private void rollbackToInitialSnapshot() {
         player.resetForCheckpoint(initialSnapshot.getPlayerX(),
                                   initialSnapshot.getPlayerY(),
-                                  initialSnapshot.getPlayerHp());
+                                  initialSnapshot.getPlayerHp(),
+                                  initialSnapshot.getPlayerMana());
         initialSnapshot.restoreInventory(inventory);
 
         EnemySnapshot[] snapshots = initialSnapshot.getEnemySnapshots();
@@ -586,7 +587,7 @@ public class Level2Scene extends AnimationTimer {
 
         if (Collision.checkAABB(player.getHitbox(), goalDoor)) {
             transitioning = true;
-            Main.setPersistedHp(player.getHp());   // 帶入血量到 Boss 關
+            Main.setPersistedPlayerState(player.getHp(), player.getMana());   // 帶入狀態到 Boss 關
             this.stop();
             Main.startBoss();
         }
@@ -756,53 +757,8 @@ public class Level2Scene extends AnimationTimer {
      * @param gc 畫布繪圖上下文
      */
     private void drawHUD(GraphicsContext gc) {
-        final double barX = 12;
-        final double barY = 12;
-        final double barW = 160;
-        final double barH = 14;
-
-        // 標題文字
-        gc.setFill(Color.LIGHTGRAY);
-        gc.setFont(Font.font(11));
-        gc.fillText("HP", barX, barY - 2);
-
-        // 血量條背景（深紅底）
-        gc.setFill(Color.web("#5a0000"));
-        gc.fillRect(barX, barY, barW, barH);
-
-        // 血量條前景（依比例變色）
-        double ratio    = (double) player.getHp() / player.getMaxHp();
-        Color  barColor = ratio > 0.6 ? Color.LIMEGREEN
-                        : ratio > 0.3 ? Color.ORANGE
-                                      : Color.RED;
-        gc.setFill(barColor);
-        gc.fillRect(barX, barY, barW * ratio, barH);
-
-        // 血量數值文字
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font(11));
-        gc.fillText(player.getHp() + " / " + player.getMaxHp(),
-                    barX + barW + 6, barY + 11);
-
-        // 關卡標題
-        gc.setFill(Color.LIGHTGRAY);
-        gc.setFont(Font.font(12));
-        gc.fillText("LEVEL 2", Config.WINDOW_WIDTH / 2.0 - 27, 20);
-
-        drawFireballCooldownHUD(gc);
+        HudRenderer.drawPlayerStatus(gc, player, "LEVEL 2");
         drawInventoryHUD(gc);
-    }
-
-    /**
-     * 繪製火球術冷卻。
-     */
-    private void drawFireballCooldownHUD(GraphicsContext gc) {
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font(12));
-        String text = player.canCastFireball()
-            ? "Fireball: Ready"
-            : "Fireball: " + String.format("%.1fs", player.getFireballCooldownTimer());
-        gc.fillText(text, 12, 48);
     }
 
     /**

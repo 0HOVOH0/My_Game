@@ -106,8 +106,7 @@ public class Level1Scene extends AnimationTimer {
         Canvas canvas = new Canvas(Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
         gc = canvas.getGraphicsContext2D();
 
-        Pane  root      = new Pane(canvas);
-        Scene javafxScene = new Scene(root, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
+        Scene javafxScene = CanvasSceneSupport.createScaledCanvasScene(stage, canvas);
 
         // ── 初始化玩家 ────────────────────────────────────────────────────────
         // 玩家出生在 P1 上方，會立即落下並踩到 P1（P1 頂面 y=500，玩家高 42）
@@ -275,7 +274,7 @@ public class Level1Scene extends AnimationTimer {
 
         if (Collision.checkAABB(player.getHitbox(), goalDoor)) {
             transitioning = true;
-            Main.setPersistedHp(player.getHp());   // 帶入血量到 Level2
+            Main.setPersistedPlayerState(player.getHp(), player.getMana());   // 帶入狀態到 Level2
             this.stop();
             Main.startLevel2();
         }
@@ -423,51 +422,6 @@ public class Level1Scene extends AnimationTimer {
      * @param gc 畫布繪圖上下文
      */
     private void drawHUD(GraphicsContext gc) {
-        final double barX = 12;
-        final double barY = 12;
-        final double barW = 160;
-        final double barH = 14;
-
-        // 標題文字
-        gc.setFill(Color.LIGHTGRAY);
-        gc.setFont(Font.font(11));
-        gc.fillText("HP", barX, barY - 2);
-
-        // 血量條背景（深紅）
-        gc.setFill(Color.web("#5a0000"));
-        gc.fillRect(barX, barY, barW, barH);
-
-        // 血量條前景（依比例變色）
-        double ratio = (double) player.getHp() / player.getMaxHp();
-        Color  barColor = ratio > 0.6 ? Color.LIMEGREEN
-                        : ratio > 0.3 ? Color.ORANGE
-                                      : Color.RED;
-        gc.setFill(barColor);
-        gc.fillRect(barX, barY, barW * ratio, barH);
-
-        // 血量數值文字
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font(11));
-        gc.fillText(player.getHp() + " / " + player.getMaxHp(),
-                    barX + barW + 6, barY + 11);
-
-        // 關卡標題
-        gc.setFill(Color.LIGHTGRAY);
-        gc.setFont(Font.font(12));
-        gc.fillText("LEVEL 1", Config.WINDOW_WIDTH / 2.0 - 25, 20);
-
-        drawFireballCooldownHUD(gc);
-    }
-
-    /**
-     * 繪製火球術冷卻。
-     */
-    private void drawFireballCooldownHUD(GraphicsContext gc) {
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font(12));
-        String text = player.canCastFireball()
-            ? "Fireball: Ready"
-            : "Fireball: " + String.format("%.1fs", player.getFireballCooldownTimer());
-        gc.fillText(text, 12, 48);
+        HudRenderer.drawPlayerStatus(gc, player, "LEVEL 1");
     }
 }

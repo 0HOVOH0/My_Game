@@ -177,12 +177,12 @@ public class BossScene extends AnimationTimer {
         Canvas canvas = new Canvas(Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
         gc = canvas.getGraphicsContext2D();
 
-        Pane  root        = new Pane(canvas);
-        Scene javafxScene = new Scene(root, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
+        Scene javafxScene = CanvasSceneSupport.createScaledCanvasScene(stage, canvas);
 
         // ── 初始化玩家（帶入 Level2 結束時的血量） ────────────────────────────
         player = new Player(70, 460);
         player.setHp(Main.getPersistedHp());
+        player.setMana(Main.getPersistedMana());
 
         // ── 初始化 Boss（右側登場，落到地面，FSM 起始 IDLE 1 秒） ─────────────
         boss = new Boss(700, 340, player);
@@ -206,7 +206,7 @@ public class BossScene extends AnimationTimer {
         };
 
         initialSnapshot = new StageSnapshot(
-            player.getX(), player.getY(), player.getHp(),
+            player.getX(), player.getY(), player.getHp(), player.getMana(),
             inventory, pickupItems, new ArrayList<>(),
             false, 0, 0, 0, 0
         );
@@ -403,7 +403,8 @@ public class BossScene extends AnimationTimer {
     private void rollbackToInitialSnapshot() {
         player.resetForCheckpoint(initialSnapshot.getPlayerX(),
                                   initialSnapshot.getPlayerY(),
-                                  initialSnapshot.getPlayerHp());
+                                  initialSnapshot.getPlayerHp(),
+                                  initialSnapshot.getPlayerMana());
         initialSnapshot.restoreInventory(inventory);
         pickupItems.clear();
         pickupItems.addAll(initialSnapshot.createPickupItems());
@@ -700,7 +701,7 @@ public class BossScene extends AnimationTimer {
      * @param gc 畫布繪圖上下文
      */
     private void drawHUD(GraphicsContext gc) {
-        drawPlayerHpBar(gc);
+        HudRenderer.drawPlayerStatus(gc, player, "BOSS");
         drawBossHpBar(gc);
     }
 
@@ -711,35 +712,7 @@ public class BossScene extends AnimationTimer {
      * @param gc 畫布繪圖上下文
      */
     private void drawPlayerHpBar(GraphicsContext gc) {
-        final double barX = 12;
-        final double barY = 12;
-        final double barW = 160;
-        final double barH = 14;
-
-        // 「HP」標題文字
-        gc.setFill(Color.LIGHTGRAY);
-        gc.setFont(Font.font(11));
-        gc.fillText("HP", barX, barY - 2);
-
-        // 血量條背景（深紅底）
-        gc.setFill(Color.web("#5a0000"));
-        gc.fillRect(barX, barY, barW, barH);
-
-        // 血量條前景（依比例變色）
-        double ratio    = (double) player.getHp() / player.getMaxHp();
-        Color  barColor = ratio > 0.6 ? Color.LIMEGREEN
-                        : ratio > 0.3 ? Color.ORANGE
-                                      : Color.RED;
-        gc.setFill(barColor);
-        gc.fillRect(barX, barY, barW * ratio, barH);
-
-        // 血量數值文字
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font(11));
-        gc.fillText(player.getHp() + " / " + player.getMaxHp(),
-                    barX + barW + 6, barY + 11);
-
-        drawFireballCooldownHUD(gc);
+        HudRenderer.drawPlayerStatus(gc, player, "BOSS");
     }
 
     /**
@@ -752,7 +725,7 @@ public class BossScene extends AnimationTimer {
      */
     private void drawBossHpBar(GraphicsContext gc) {
         final double barX = (Config.WINDOW_WIDTH - BOSS_BAR_W) / 2.0;   // 水平置中
-        final double barY = 14;
+        final double barY = 82;
 
         // Boss 名稱（TODO: 換成設計好的字型與角色名稱）
         gc.setFill(Color.LIGHTGRAY);
@@ -785,18 +758,6 @@ public class BossScene extends AnimationTimer {
                     barX + BOSS_BAR_W + 6, barY + 13);
 
         drawInventoryHUD(gc);
-    }
-
-    /**
-     * 繪製火球術冷卻。
-     */
-    private void drawFireballCooldownHUD(GraphicsContext gc) {
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font(12));
-        String text = player.canCastFireball()
-            ? "Fireball: Ready"
-            : "Fireball: " + String.format("%.1fs", player.getFireballCooldownTimer());
-        gc.fillText(text, 12, 48);
     }
 
     /**

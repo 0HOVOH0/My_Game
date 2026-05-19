@@ -2,8 +2,10 @@ package ncu.cs2.my_game;
 
 import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
+import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
+import ncu.cs2.my_game.scene.CanvasSceneSupport;
 import ncu.cs2.my_game.scene.BossScene;
 import ncu.cs2.my_game.scene.GameScene;
 import ncu.cs2.my_game.scene.Level1Scene;
@@ -35,6 +37,9 @@ public class Main extends Application {
      */
     private static int persistedHp = Config.PLAYER_MAX_HP;
 
+    /** 跨關卡持久化的玩家魔力。 */
+    private static double persistedMana = Config.PLAYER_MAX_MANA;
+
     /** 跨 Level2 與 Boss 關保留的簡易背包 */
     private static Inventory inventory = new Inventory();
 
@@ -49,7 +54,10 @@ public class Main extends Application {
         stage.setTitle("My Game");
         stage.setWidth(Config.WINDOW_WIDTH);
         stage.setHeight(Config.WINDOW_HEIGHT);
-        stage.setResizable(false);
+        stage.setMinWidth(Config.MIN_WIDTH);
+        stage.setMinHeight(Config.MIN_HEIGHT);
+        stage.setResizable(true);
+        stage.setFullScreenExitHint("");
 
         // 載入初始場景（開始畫面）
         switchScene("start-scene.fxml");
@@ -65,7 +73,8 @@ public class Main extends Application {
     public static void switchScene(String fxmlName) {
         try {
             FXMLLoader loader = new FXMLLoader(Main.class.getResource(fxmlName));
-            Scene scene = new Scene(loader.load(), Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
+            Parent root = loader.load();
+            Scene scene = CanvasSceneSupport.createScaledScene(primaryStage, root);
             primaryStage.setScene(scene);
         } catch (IOException e) {
             // TODO: 加入正式的錯誤提示畫面，取代 stderr 輸出
@@ -87,6 +96,7 @@ public class Main extends Application {
      */
     public static void startLevel1() {
         persistedHp     = Config.PLAYER_MAX_HP;
+        persistedMana   = Config.PLAYER_MAX_MANA;
         inventory       = new Inventory();
         gameStartMillis = System.currentTimeMillis();
         new Level1Scene(primaryStage);
@@ -135,6 +145,11 @@ public class Main extends Application {
         return persistedHp;
     }
 
+    /** 回傳跨關卡持久化的玩家魔力。 */
+    public static double getPersistedMana() {
+        return persistedMana;
+    }
+
     /**
      * 儲存玩家目前血量，供下一個場景讀取。
      * 由關卡終點門觸發，傳入 player.getHp()。
@@ -143,6 +158,12 @@ public class Main extends Application {
      */
     public static void setPersistedHp(int hp) {
         persistedHp = Math.max(1, Math.min(hp, Config.PLAYER_MAX_HP));
+    }
+
+    /** 儲存玩家目前血量與魔力，供下一個場景讀取。 */
+    public static void setPersistedPlayerState(int hp, double mana) {
+        setPersistedHp(hp);
+        persistedMana = Math.max(0.0, Math.min(mana, Config.PLAYER_MAX_MANA));
     }
 
     /** 回傳跨關卡背包 */

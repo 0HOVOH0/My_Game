@@ -8,11 +8,23 @@ public final class Config {
 
     // ── 視窗設定 ──────────────────────────────────────────────────────────────
 
-    /** 視窗寬度（像素） */
-    public static final int WINDOW_WIDTH  = 800;
+    /** 遊戲邏輯與 Canvas 渲染的基準寬度（像素）。 */
+    public static final int BASE_WIDTH  = 800;
 
-    /** 視窗高度（像素） */
-    public static final int WINDOW_HEIGHT = 600;
+    /** 遊戲邏輯與 Canvas 渲染的基準高度（像素）。 */
+    public static final int BASE_HEIGHT = 600;
+
+    /** 視窗最小寬度（像素）。 */
+    public static final int MIN_WIDTH = 640;
+
+    /** 視窗最小高度（像素）。 */
+    public static final int MIN_HEIGHT = 480;
+
+    /** 舊有程式相容用：目前等同於 BASE_WIDTH。 */
+    public static final int WINDOW_WIDTH  = BASE_WIDTH;
+
+    /** 舊有程式相容用：目前等同於 BASE_HEIGHT。 */
+    public static final int WINDOW_HEIGHT = BASE_HEIGHT;
 
     // ── 物理設定 ──────────────────────────────────────────────────────────────
 
@@ -38,6 +50,27 @@ public final class Config {
 
     /** 玩家最大血量 */
     public static final int PLAYER_MAX_HP = 100;
+
+    /** 玩家最大魔力量 */
+    public static final double PLAYER_MAX_MANA = 100.0;
+
+    /** 玩家每秒自動恢復的魔力量 */
+    public static final double PLAYER_MANA_REGEN_PER_SEC = 8.0;
+
+    /** 火球施放冷卻時間（秒） */
+    public static final double FIREBALL_COOLDOWN = 2.0;
+
+    /** 每顆火球消耗的魔力量 */
+    public static final double FIREBALL_MANA_COST = 20.0;
+
+    /** 玩家火球大小（像素） */
+    public static final double FIREBALL_SIZE = 18.0;
+
+    /** 玩家火球飛行速度（像素 / 秒） */
+    public static final double FIREBALL_SPEED = 360.0;
+
+    /** 玩家火球傷害 */
+    public static final int FIREBALL_DAMAGE = 25;
 
     /** Boss 最大血量 */
     public static final int BOSS_MAX_HP   = 600;

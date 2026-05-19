@@ -34,9 +34,6 @@ public class Player extends Entity {
 
     // ── 火球常數 ─────────────────────────────────────────────────────────────
 
-    /** 火球術冷卻時間（秒） */
-    public static final double FIREBALL_COOLDOWN = 5.0;
-
     /** 強化火球傷害 */
     public static final int EMPOWERED_FIREBALL_DAMAGE = 60;
 
@@ -82,8 +79,14 @@ public class Player extends Entity {
     /** 目前仍存在的玩家火球 */
     private final List<Fireball> fireballs;
 
+    /** 目前魔力量 */
+    private double mana;
+
     /** 火球術剩餘冷卻時間（秒）；0 時可再次施放 */
     private double fireballCooldownTimer;
+
+    /** 最近一次按 F 失敗是否因為魔力不足，用於 HUD 提示 */
+    private boolean lastFireballFailedForMana;
 
     // ── 無敵與閃爍 ───────────────────────────────────────────────────────────
 
@@ -118,7 +121,9 @@ public class Player extends Entity {
         attackLanded   = false;
         attackTimer    = 0;
         fireballs      = new ArrayList<>();
+        mana           = Config.PLAYER_MAX_MANA;
         fireballCooldownTimer = 0;
+        lastFireballFailedForMana = false;
         invincibleTimer = 0;
         flickerTimer   = 0;
         flickerVisible  = true;
@@ -147,7 +152,8 @@ public class Player extends Entity {
         // 4. 攻擊計時——同步攻擊框位置，時間到則清除
         updateAttack(deltaTime);
 
-        // 5. 火球冷卻與投射物更新
+        // 5. 魔力、火球冷卻與投射物更新
+        updateMana(deltaTime);
         updateFireballs(deltaTime);
 
         // 6. 無敵與閃爍計時
@@ -215,6 +221,16 @@ public class Player extends Entity {
         }
     }
 
+    private void updateMana(double deltaTime) {
+        if (mana < Config.PLAYER_MAX_MANA) {
+            mana = Math.min(Config.PLAYER_MAX_MANA,
+                            mana + Config.PLAYER_MANA_REGEN_PER_SEC * deltaTime);
+        }
+        if (lastFireballFailedForMana && mana >= Config.FIREBALL_MANA_COST) {
+            lastFireballFailedForMana = false;
+        }
+    }
+
     /**
      * 更新無敵計時與閃爍顯示狀態。
      * 無敵結束後強制恢復顯示。
@@ -264,7 +280,7 @@ public class Player extends Entity {
             startAttack();
         }
 
-        // 火球術：F 鍵，依目前面向發射；有 5 秒冷卻
+        // 火球術：F 鍵，依目前面向水平發射；需消耗 Mana 並有冷卻
         if (key == KeyCode.F) {
             castFireball();
         }
@@ -299,10 +315,16 @@ public class Player extends Entity {
      */
     private void castFireball() {
         if (fireballCooldownTimer > 0) return;
+        if (mana < Config.FIREBALL_MANA_COST) {
+            lastFireballFailedForMana = true;
+            return;
+        }
 
-        spawnFireball(Fireball.SIZE, Fireball.SPEED, Fireball.DAMAGE,
+        mana -= Config.FIREBALL_MANA_COST;
+        lastFireballFailedForMana = false;
+        spawnFireball(Config.FIREBALL_SIZE, Config.FIREBALL_SPEED, Config.FIREBALL_DAMAGE,
                       Color.ORANGERED, Color.YELLOW);
-        fireballCooldownTimer = FIREBALL_COOLDOWN;
+        fireballCooldownTimer = Config.FIREBALL_COOLDOWN;
     }
 
     /**
@@ -319,26 +341,16 @@ public class Player extends Entity {
      */
     private void spawnFireball(double fireballSize, double speed, int damage,
                                Color fillColor, Color strokeColor) {
-        double dirX = facingDirection.dx;
-        double dirY = facingDirection.dy;
+        double dirX = facingRight ? 1.0 : -1.0;
+        double spawnX = facingRight ? x + width : x - fireballSize;
+        double spawnY = y + (height - fireballSize) / 2.0;
 
-        double spawnX = switch (facingDirection) {
-            case LEFT  -> x - fireballSize;
-            case RIGHT -> x + width;
-            case UP, DOWN -> x + (width - fireballSize) / 2.0;
-        };
-        double spawnY = switch (facingDirection) {
-            case UP    -> y - fireballSize;
-            case DOWN  -> y + height;
-            case LEFT, RIGHT -> y + (height - fireballSize) / 2.0;
-        };
-
-        fireballs.add(new Fireball(spawnX, spawnY, dirX, dirY,
+        fireballs.add(new Fireball(spawnX, spawnY, dirX, 0,
                                    fireballSize, speed, damage, fillColor, strokeColor));
     }
 
     /**
-     * 使用最近按下的方向鍵更新面向；S 不移動，只用於向下施法瞄準。
+     * 使用最近按下的水平移動鍵更新面向。S 不再用於火球向下瞄準，避免與其他功能衝突。
      *
      * @param key 被按下的按鍵
      */
@@ -352,8 +364,6 @@ public class Player extends Entity {
                 facingRight = true;
                 facingDirection = Direction.RIGHT;
             }
-            case W -> facingDirection = Direction.UP;
-            case S -> facingDirection = Direction.DOWN;
             default -> {
                 // 其他按鍵不改變面向
             }
@@ -510,21 +520,49 @@ public class Player extends Entity {
     public List<Fireball> getFireballs() { return fireballs; }
 
     /** 回傳火球術是否可施放 */
-    public boolean canCastFireball() { return fireballCooldownTimer <= 0; }
+    public boolean canCastFireball() {
+        return fireballCooldownTimer <= 0 && mana >= Config.FIREBALL_MANA_COST;
+    }
 
     /** 回傳火球術剩餘冷卻秒數 */
     public double getFireballCooldownTimer() { return fireballCooldownTimer; }
+
+    public double getMana() { return mana; }
+
+    public double getMaxMana() { return Config.PLAYER_MAX_MANA; }
+
+    public void setMana(double mana) {
+        this.mana = Math.max(0.0, Math.min(mana, Config.PLAYER_MAX_MANA));
+    }
+
+    public String getFireballStatusText() {
+        if (lastFireballFailedForMana && mana < Config.FIREBALL_MANA_COST) {
+            return "Not enough mana";
+        }
+        if (fireballCooldownTimer > 0) {
+            return String.format("%.1fs", fireballCooldownTimer);
+        }
+        if (mana < Config.FIREBALL_MANA_COST) {
+            return "Not enough mana";
+        }
+        return "Ready";
+    }
 
     /**
      * 將玩家還原到關卡 checkpoint 起點。
      * 清除暫態輸入、攻擊、火球與無敵狀態，避免死亡前狀態污染重生後的關卡。
      */
     public void resetForCheckpoint(double startX, double startY, int checkpointHp) {
+        resetForCheckpoint(startX, startY, checkpointHp, Config.PLAYER_MAX_MANA);
+    }
+
+    public void resetForCheckpoint(double startX, double startY, int checkpointHp, double checkpointMana) {
         x = startX;
         y = startY;
         velocityX = 0;
         velocityY = 0;
         hp = Math.max(0, Math.min(checkpointHp, maxHp));
+        setMana(checkpointMana);
         isOnGround = false;
         facingRight = true;
         facingDirection = Direction.RIGHT;
@@ -534,6 +572,7 @@ public class Player extends Entity {
         attackTimer = 0;
         fireballs.clear();
         fireballCooldownTimer = 0;
+        lastFireballFailedForMana = false;
         invincibleTimer = 0;
         flickerTimer = 0;
         flickerVisible = true;
