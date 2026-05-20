@@ -15,12 +15,18 @@ public abstract class PickupItem {
     private final double x;
     private final double y;
     private final PickupType type;
+    private final int quantity;
     private boolean pickedUp;
 
     protected PickupItem(double x, double y, PickupType type) {
+        this(x, y, type, 1);
+    }
+
+    protected PickupItem(double x, double y, PickupType type, int quantity) {
         this.x = x;
         this.y = y;
         this.type = type;
+        this.quantity = Math.max(1, quantity);
         this.pickedUp = false;
     }
 
@@ -36,10 +42,13 @@ public abstract class PickupItem {
         gc.save();
         gc.setFill(Color.WHITE);
         gc.fillRect(x - 1, y - 1, SIZE + 2, SIZE + 2);
-        gc.setFill(getFillColor());
-        gc.fillRect(x, y, SIZE, SIZE);
-        gc.setFill(Color.WHITE);
-        gc.fillText(getSymbol(), x + 6, y + 15);
+        type.drawIcon(gc, x, y, SIZE);
+        if (quantity > 1) {
+            gc.setFill(Color.web("#111111", 0.78));
+            gc.fillRoundRect(x + SIZE - 13, y + SIZE - 10, 14, 10, 4, 4);
+            gc.setFill(Color.WHITE);
+            gc.fillText(String.valueOf(quantity), x + SIZE - 10, y + SIZE - 2);
+        }
         gc.restore();
     }
 
@@ -48,6 +57,8 @@ public abstract class PickupItem {
     }
 
     public PickupType getType() { return type; }
+
+    public int getQuantity() { return quantity; }
 
     public boolean isPickedUp() { return pickedUp; }
 

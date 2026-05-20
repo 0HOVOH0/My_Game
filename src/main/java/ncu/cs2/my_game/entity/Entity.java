@@ -148,5 +148,10 @@ public abstract class Entity {
         this.hp = Math.max(0, Math.min(hp, maxHp));
     }
 
+    public void setMaxHp(int maxHp) {
+        this.maxHp = Math.max(1, maxHp);
+        this.hp = Math.min(this.hp, this.maxHp);
+    }
+
     // TODO: 加入 takeDamage(int amount)、heal(int amount) 等便利方法
 }

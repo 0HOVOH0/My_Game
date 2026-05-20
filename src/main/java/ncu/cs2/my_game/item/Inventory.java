@@ -1,48 +1,130 @@
 package ncu.cs2.my_game.item;
 
-import java.util.EnumMap;
-import java.util.Map;
+import ncu.cs2.my_game.Config;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * 簡單背包：依道具種類記錄數量，使用時由道具類別套用效果。
+ * 簡單背包：保存固定數量 slot，每格一種道具，同類型可堆疊。
  */
 public class Inventory {
 
-    private final Map<PickupType, Integer> counts = new EnumMap<>(PickupType.class);
+    private final List<InventorySlot> slots;
 
-    public void add(PickupType type) {
-        counts.put(type, getCount(type) + 1);
+    public Inventory() {
+        this(Config.INVENTORY_SIZE);
     }
 
-    public boolean use(PickupType type, UseContext context) {
-        int count = getCount(type);
-        if (count <= 0) return false;
+    public Inventory(int capacity) {
+        slots = new ArrayList<>();
+        for (int i = 0; i < capacity; i++) {
+            slots.add(new InventorySlot());
+        }
+    }
 
-        type.create(0, 0).use(context);
-        counts.put(type, count - 1);
+    public boolean add(PickupType type) {
+        return add(type, 1);
+    }
+
+    public boolean add(PickupType type, int amount) {
+        if (type == null || amount <= 0) return false;
+
+        InventorySlot existing = findSlot(type);
+        if (existing != null) {
+            existing.add(amount);
+            return true;
+        }
+
+        InventorySlot empty = findEmptySlot();
+        if (empty == null) return false;
+
+        empty.set(type, amount);
         return true;
     }
 
+    public boolean useSlot(int slotIndex, UseContext context) {
+        InventorySlot slot = getSlot(slotIndex);
+        if (slot == null || slot.isEmpty()) return false;
+
+        slot.getType().create(0, 0).use(context);
+        slot.decrement();
+        return true;
+    }
+
+    public InventorySlot replaceSlot(int slotIndex, PickupType newType, int newCount) {
+        InventorySlot slot = getSlot(slotIndex);
+        if (slot == null || slot.isEmpty() || newType == null || newCount <= 0) return null;
+
+        InventorySlot dropped = slot.copy();
+        slot.set(newType, newCount);
+        return dropped;
+    }
+
     public int getCount(PickupType type) {
-        return counts.getOrDefault(type, 0);
+        int total = 0;
+        for (InventorySlot slot : slots) {
+            if (!slot.isEmpty() && slot.getType() == type) {
+                total += slot.getCount();
+            }
+        }
+        return total;
+    }
+
+    public boolean contains(PickupType type) {
+        return findSlot(type) != null;
+    }
+
+    public boolean canAccept(PickupType type) {
+        return contains(type) || findEmptySlot() != null;
+    }
+
+    public boolean isFull() {
+        return findEmptySlot() == null;
+    }
+
+    public int getCapacity() {
+        return slots.size();
+    }
+
+    public InventorySlot getSlot(int index) {
+        if (index < 0 || index >= slots.size()) return null;
+        return slots.get(index);
+    }
+
+    public PickupType getSlotType(int slotIndex) {
+        InventorySlot slot = getSlot(slotIndex);
+        return slot == null || slot.isEmpty() ? null : slot.getType();
+    }
+
+    public int getSlotCount(int slotIndex) {
+        InventorySlot slot = getSlot(slotIndex);
+        return slot == null ? 0 : slot.getCount();
     }
 
     /**
-     * 建立目前背包數量的淺量快照。
-     * PickupType 是 enum，可安全共用；數量值為 immutable Integer。
+     * 建立目前背包 slot 的輕量快照。
      */
-    public Map<PickupType, Integer> snapshotCounts() {
-        return new EnumMap<>(counts);
+    public List<InventorySlot> snapshotSlots() {
+        List<InventorySlot> snapshot = new ArrayList<>();
+        for (InventorySlot slot : slots) {
+            snapshot.add(slot.copy());
+        }
+        return snapshot;
     }
 
     /**
-     * 將背包還原成指定數量。
-     *
-     * @param snapshot 由 snapshotCounts() 建立的數量快照
+     * 將背包還原成指定 slot 狀態。
      */
-    public void restoreCounts(Map<PickupType, Integer> snapshot) {
-        counts.clear();
-        counts.putAll(snapshot);
+    public void restoreSlots(List<InventorySlot> snapshot) {
+        for (InventorySlot slot : slots) {
+            slot.clear();
+        }
+        int limit = Math.min(slots.size(), snapshot.size());
+        for (int i = 0; i < limit; i++) {
+            InventorySlot saved = snapshot.get(i);
+            slots.get(i).set(saved.getType(), saved.getCount());
+        }
     }
 
     /**
@@ -50,5 +132,21 @@ public class Inventory {
      */
     public PickupType[] getDisplayTypes() {
         return PickupType.values();
+    }
+
+    private InventorySlot findSlot(PickupType type) {
+        for (InventorySlot slot : slots) {
+            if (!slot.isEmpty() && slot.getType() == type) {
+                return slot;
+            }
+        }
+        return null;
+    }
+
+    private InventorySlot findEmptySlot() {
+        for (InventorySlot slot : slots) {
+            if (slot.isEmpty()) return slot;
+        }
+        return null;
     }
 }

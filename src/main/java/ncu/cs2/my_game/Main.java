@@ -10,7 +10,12 @@ import ncu.cs2.my_game.scene.BossScene;
 import ncu.cs2.my_game.scene.GameScene;
 import ncu.cs2.my_game.scene.Level1Scene;
 import ncu.cs2.my_game.scene.Level2Scene;
+import ncu.cs2.my_game.scene.ShopScene;
+import ncu.cs2.my_game.stage.StageDefinition;
+import ncu.cs2.my_game.stage.StageGenerator;
 import ncu.cs2.my_game.item.Inventory;
+import ncu.cs2.my_game.economy.CurrencyManager;
+import ncu.cs2.my_game.entity.BossType;
 
 import java.io.IOException;
 
@@ -42,6 +47,26 @@ public class Main extends Application {
 
     /** 跨 Level2 與 Boss 關保留的簡易背包 */
     private static Inventory inventory = new Inventory();
+
+    /** 跨關卡保留的金幣。 */
+    private static CurrencyManager currencyManager = new CurrencyManager();
+
+    /** 隨機關卡生成器。 */
+    private static StageGenerator stageGenerator = new StageGenerator();
+
+    /** 目前進度關卡編號。 */
+    private static int stageNumber = 1;
+
+    /** 每輪 Boss 前需要完成的一般關卡數。Level1 會計入第一輪第一關。 */
+    private static final int NORMAL_STAGES_BEFORE_SHOP = 3;
+
+    /** 本輪已完成的一般關卡數。 */
+    private static int normalStagesInCycle = 0;
+
+    /** 下一個一般關卡定義。 */
+    private static StageDefinition nextStageDefinition = stageGenerator.nextStage();
+
+    private static BossType lastBossType = null;
 
     /**
      * JavaFX 啟動方法，初始化視窗並載入主選單場景
@@ -98,6 +123,12 @@ public class Main extends Application {
         persistedHp     = Config.PLAYER_MAX_HP;
         persistedMana   = Config.PLAYER_MAX_MANA;
         inventory       = new Inventory();
+        currencyManager = new CurrencyManager();
+        stageGenerator  = new StageGenerator();
+        stageNumber     = 1;
+        normalStagesInCycle = 1;
+        lastBossType = null;
+        nextStageDefinition = stageGenerator.nextStage();
         gameStartMillis = System.currentTimeMillis();
         new Level1Scene(primaryStage);
     }
@@ -107,12 +138,33 @@ public class Main extends Application {
      * Level2Scene 繼承 AnimationTimer，建構子內部會自動呼叫 start()。
      */
     public static void startLevel2() {
-        new Level2Scene(primaryStage);
+        new Level2Scene(primaryStage, nextStageDefinition);
+    }
+
+    /**
+     * 建立 ShopScene，固定插在 Boss 關之前。
+     */
+    public static void startShop() {
+        new ShopScene(primaryStage);
+    }
+
+    /**
+     * 一般關卡完成後的節奏控制：Boss 前固定先進商店。
+     */
+    public static void completeNormalStage() {
+        normalStagesInCycle++;
+        stageNumber++;
+        if (normalStagesInCycle >= NORMAL_STAGES_BEFORE_SHOP) {
+            startShop();
+            return;
+        }
+        nextStageDefinition = stageGenerator.nextStage();
+        startLevel2();
     }
 
     /**
      * 建立 BossScene 並啟動 Boss 關。
-     * 由 Level2Scene 的終點門觸發，也作為玩家死亡後按 R 的重啟目標。
+     * 由 ShopScene 觸發，也作為玩家死亡後按 R 的重啟目標。
      */
     public static void startBoss() {
         new BossScene(primaryStage);
@@ -169,6 +221,46 @@ public class Main extends Application {
     /** 回傳跨關卡背包 */
     public static Inventory getInventory() {
         return inventory;
+    }
+
+    public static int getGold() {
+        return currencyManager.getGold();
+    }
+
+    public static void setGold(int gold) {
+        currencyManager.setGold(gold);
+    }
+
+    public static void addGold(int amount) {
+        currencyManager.addGold(amount);
+    }
+
+    public static boolean spendGold(int amount) {
+        return currencyManager.spendGold(amount);
+    }
+
+    public static int getStageNumber() {
+        return stageNumber;
+    }
+
+    public static StageDefinition getCurrentStageDefinition() {
+        return nextStageDefinition;
+    }
+
+    public static void advanceAfterBoss() {
+        stageNumber++;
+        normalStagesInCycle = 0;
+        nextStageDefinition = stageGenerator.nextStage();
+    }
+
+    public static BossType rollBossType() {
+        BossType[] types = BossType.values();
+        BossType picked = types[(int) (Math.random() * types.length)];
+        if (lastBossType != null && picked == lastBossType) {
+            picked = types[(picked.ordinal() + 1) % types.length];
+        }
+        lastBossType = picked;
+        return picked;
     }
 
     /** 程式進入點 */

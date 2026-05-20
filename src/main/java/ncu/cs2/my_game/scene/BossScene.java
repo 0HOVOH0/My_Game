@@ -12,11 +12,23 @@ import javafx.scene.text.Font;
 import javafx.stage.Stage;
 import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.Main;
+import ncu.cs2.my_game.economy.GoldPickup;
+import ncu.cs2.my_game.economy.GoldSpawnManager;
+import ncu.cs2.my_game.entity.BombEntity;
 import ncu.cs2.my_game.entity.Boss;
+import ncu.cs2.my_game.entity.BossType;
+import ncu.cs2.my_game.entity.Enemy;
 import ncu.cs2.my_game.entity.Fireball;
+import ncu.cs2.my_game.entity.GroundSpike;
+import ncu.cs2.my_game.entity.GroundSpikeBoss;
+import ncu.cs2.my_game.entity.IceProjectile;
 import ncu.cs2.my_game.entity.Player;
+import ncu.cs2.my_game.entity.RangedEnemy;
+import ncu.cs2.my_game.entity.SummonerBoss;
 import ncu.cs2.my_game.fsm.BossState;
 import ncu.cs2.my_game.item.Inventory;
+import ncu.cs2.my_game.item.InventorySlot;
+import ncu.cs2.my_game.item.ItemSpawnManager;
 import ncu.cs2.my_game.item.PickupItem;
 import ncu.cs2.my_game.item.PickupType;
 import ncu.cs2.my_game.item.UseContext;
@@ -102,8 +114,25 @@ public class BossScene extends AnimationTimer {
     /** Boss 關可撿取道具 */
     private final List<PickupItem> pickupItems;
 
+    /** Boss 關可撿取金幣 */
+    private final List<GoldPickup> goldPickups;
+
+    private final List<BombEntity> bombs;
+
     /** 掉落用亂數 */
     private final Random random;
+
+    /** 道具安全生成器 */
+    private final ItemSpawnManager itemSpawnManager;
+
+    /** 金幣安全生成器 */
+    private final GoldSpawnManager goldSpawnManager;
+
+    /** 是否顯示背包 overlay。 */
+    private boolean inventoryOpen;
+
+    /** 目前 HUD 高亮的背包 slot。 */
+    private int selectedInventorySlot;
 
     /** Boss 關剛進入時的狀態快照 */
     private final StageSnapshot initialSnapshot;
@@ -116,6 +145,17 @@ public class BossScene extends AnimationTimer {
      * Boss 不與平台互動，只與地板碰撞。
      */
     private final Rectangle2D[] platforms;
+
+    /** Boss 房實體掩體/牆壁。 */
+    private final Rectangle2D[] covers;
+
+    /** 小兵視線與投射物會被平台和掩體共同阻擋。 */
+    private final Rectangle2D[] visionBlockers;
+
+    /** Boss dash 落點檢查用地面集合。 */
+    private final Rectangle2D[] dashSurfaces;
+
+    private final Rectangle2D[] navigationSurfaces;
 
     // ── 階段與視覺效果 ────────────────────────────────────────────────────────
 
@@ -162,6 +202,9 @@ public class BossScene extends AnimationTimer {
     /** 上一幀的時間戳記（奈秒）；0 表示尚未初始化 */
     private long lastNano = 0;
 
+    private double playerPlatformDropTimer = 0;
+    private Rectangle2D bossExitDoor = null;
+
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
@@ -178,16 +221,17 @@ public class BossScene extends AnimationTimer {
         gc = canvas.getGraphicsContext2D();
 
         Scene javafxScene = CanvasSceneSupport.createScaledCanvasScene(stage, canvas);
+        Fireball.setWorldBounds(Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
 
         // ── 初始化玩家（帶入 Level2 結束時的血量） ────────────────────────────
         player = new Player(70, 460);
         player.setHp(Main.getPersistedHp());
         player.setMana(Main.getPersistedMana());
 
-        // ── 初始化 Boss（右側登場，落到地面，FSM 起始 IDLE 1 秒） ─────────────
-        boss = new Boss(700, 340, player);
         inventory = Main.getInventory();
         pickupItems = new ArrayList<>();
+        goldPickups = new ArrayList<>();
+        bombs = new ArrayList<>();
         random = new Random();
 
         // ── 地板 ──────────────────────────────────────────────────────────────
@@ -195,19 +239,30 @@ public class BossScene extends AnimationTimer {
 
         // ── 三個閃躲用平台 ────────────────────────────────────────────────────
         platforms = new Rectangle2D[] {
-            // P1：左側低台，玩家初期可站此處保持距離
-            new Rectangle2D( 30, 420, 110, PLAT_H),
-
-            // P2：中央高台，可讓玩家從上方攻擊 Boss
-            new Rectangle2D(345, 340, 110, PLAT_H),
-
-            // P3：右側低台，靠近 Boss 登場位置
-            new Rectangle2D(620, 420, 110, PLAT_H),
+            new Rectangle2D( 24 + bossRand(-8, 14), 452 + bossRand(-6, 8), bossPlatformWidth(10, 12), PLAT_H),
+            new Rectangle2D(320 + bossRand(-16, 18), 452 + bossRand(-6, 8), bossPlatformWidth(10, 12), PLAT_H),
+            new Rectangle2D(595 + bossRand(-18, 12), 452 + bossRand(-6, 8), bossPlatformWidth(9, 11), PLAT_H),
+            new Rectangle2D(135 + bossRand(-12, 18), 326 + bossRand(-8, 10), bossPlatformWidth(8, 10), PLAT_H),
+            new Rectangle2D(505 + bossRand(-18, 12), 326 + bossRand(-8, 10), bossPlatformWidth(8, 10), PLAT_H),
+            new Rectangle2D(330 + bossRand(-18, 18), 202 + bossRand(-6, 8), bossPlatformWidth(8, 9), PLAT_H),
         };
+        covers = new Rectangle2D[] {
+            new Rectangle2D(140 + bossRand(-12, 12), GROUND_Y - 76, 142, 76),
+            new Rectangle2D(335 + bossRand(-10, 12), GROUND_Y - 92, 154, 92),
+            new Rectangle2D(548 + bossRand(-12, 12), GROUND_Y - 78, 146, 78)
+        };
+        visionBlockers = mergeBlockers(platforms, covers);
+        dashSurfaces = mergeBlockers(new Rectangle2D[] { ground }, visionBlockers);
+        navigationSurfaces = dashSurfaces;
+        boss = createBoss();
+        itemSpawnManager = new ItemSpawnManager(ground, platforms);
+        goldSpawnManager = new GoldSpawnManager(ground, platforms);
+        inventoryOpen = false;
+        selectedInventorySlot = 0;
 
         initialSnapshot = new StageSnapshot(
             player.getX(), player.getY(), player.getHp(), player.getMana(),
-            inventory, pickupItems, new ArrayList<>(),
+            inventory, pickupItems, goldPickups, new ArrayList<>(),
             false, 0, 0, 0, 0
         );
 
@@ -216,6 +271,9 @@ public class BossScene extends AnimationTimer {
             // 正常移動輸入轉發給玩家
             player.handleKeyPressed(e.getCode());
             handleInventoryKey(e.getCode());
+            if (e.getCode() == KeyCode.B) {
+                inventoryOpen = !inventoryOpen;
+            }
 
             // 玩家死亡時按 R 重啟本關
             if (e.getCode() == KeyCode.R && !player.isAlive()) {
@@ -273,20 +331,20 @@ public class BossScene extends AnimationTimer {
             if (!bossDropHandled) {
                 bossDropHandled = true;
                 spawnBossDrops();
+                bossExitDoor = createBossExitDoor();
             }
 
-            bossDeadTimer += dt;
+            player.update(dt);
+            updatePlayerPlatformDrop(dt);
+            resolvePlayerPlatformCollisions();
+            tryResolvePlayerStandUp();
+            checkPickupItems();
+            checkGoldPickups();
+            checkBossExitDoor();
 
             // 仍更新視覺計時器，讓閃光與文字正常淡出
             if (flashTimer    > 0) flashTimer    -= dt;
             if (phaseTextTimer > 0) phaseTextTimer -= dt;
-
-            // 等待 WIN_DELAY 秒後切換至結算畫面
-            if (bossDeadTimer >= WIN_DELAY && !transitioning) {
-                transitioning = true;
-                this.stop();
-                Main.startEnd();
-            }
             return;
         }
 
@@ -303,8 +361,11 @@ public class BossScene extends AnimationTimer {
 
         // 1. 玩家物理更新（重力、輸入、攻擊計時）
         player.update(dt);
+        updatePlayerPlatformDrop(dt);
 
         // 2. Boss 物理更新（FSM 決定速度、重力、投射物）
+        updateBossMinionAwareness();
+        boss.configureDashNavigation(covers, dashSurfaces, Config.WINDOW_WIDTH);
         boss.update(dt);
 
         // 3. 玩家平台碰撞解析
@@ -312,6 +373,9 @@ public class BossScene extends AnimationTimer {
 
         // 4. Boss 地板碰撞解析（Boss 只與地板互動，不踩平台）
         resolveBossGround();
+
+        // 4.5 若玩家放開 S，且頭頂空間足夠，恢復站立
+        tryResolvePlayerStandUp();
 
         // 5. 玩家左右邊界
         if (player.getX() < 0)
@@ -328,10 +392,16 @@ public class BossScene extends AnimationTimer {
         // 7. 戰鬥碰撞判定
         checkPlayerAttackVsBoss();
         checkPlayerFireballsVsBoss();
+        checkPlayerIceProjectilesVsBoss();
         checkBossDashVsPlayer();
         checkBossProjectilesVsPlayer();
         checkBossBodyContactVsPlayer();
+        checkBossMinionsVsPlayer();
+        checkBossMinionProjectilesVsPlayer();
+        checkGroundSpikesVsPlayer();
         checkPickupItems();
+        checkGoldPickups();
+        updateBombs(dt);
 
         // 8. 階段轉換檢查（首次跌破閾值時觸發視覺效果）
         checkPhaseTransitions();
@@ -349,6 +419,16 @@ public class BossScene extends AnimationTimer {
      * 找到第一個命中的表面即停止，設定 Y 座標並標記站地。
      */
     private void resolvePlayerPlatformCollisions() {
+        boolean groundedOnSolid = false;
+        for (Rectangle2D cover : covers) {
+            int result = Collision.resolveSolid(player, cover);
+            if (result == -1) groundedOnSolid = true;
+        }
+        if (groundedOnSolid) {
+            player.setOnGround(true);
+            return;
+        }
+
         // 先檢查地板
         if (Collision.checkPlatform(player, ground)) {
             player.setY(ground.getMinY() - player.getHeight());
@@ -357,11 +437,13 @@ public class BossScene extends AnimationTimer {
         }
 
         // 再逐一檢查三個平台
-        for (Rectangle2D platform : platforms) {
-            if (Collision.checkPlatform(player, platform)) {
-                player.setY(platform.getMinY() - player.getHeight());
-                player.setOnGround(true);
-                return;
+        if (playerPlatformDropTimer <= 0) {
+            for (Rectangle2D platform : platforms) {
+                if (Collision.checkPlatform(player, platform)) {
+                    player.setY(platform.getMinY() - player.getHeight());
+                    player.setOnGround(true);
+                    return;
+                }
             }
         }
 
@@ -369,14 +451,141 @@ public class BossScene extends AnimationTimer {
         player.setOnGround(false);
     }
 
+    private void updatePlayerPlatformDrop(double dt) {
+        if (playerPlatformDropTimer > 0) {
+            playerPlatformDropTimer -= dt;
+            if (playerPlatformDropTimer < 0) playerPlatformDropTimer = 0;
+        }
+        if (player.consumePlatformDropRequest()) {
+            playerPlatformDropTimer = 0.22;
+            player.setY(player.getY() + 5);
+            player.setOnGround(false);
+        }
+    }
+
     /**
      * 解析 Boss 與地板的碰撞。
      * Boss 只與地板互動（不踩平台），落地後清除垂直速度。
      */
     private void resolveBossGround() {
-        if (Collision.checkPlatform(boss, ground)) {
+        boolean bossOnSolid = false;
+        for (Rectangle2D cover : covers) {
+            int result = Collision.resolveSolid(boss, cover);
+            if (result == -1) bossOnSolid = true;
+        }
+        if (bossOnSolid) {
+            boss.setOnGround(true);
+        } else if (Collision.checkPlatform(boss, ground)) {
             boss.setY(ground.getMinY() - boss.getHeight());
-            boss.setVelocityY(0);
+            boss.setOnGround(true);
+        } else {
+            boolean bossOnPlatform = false;
+            for (Rectangle2D platform : platforms) {
+                if (Collision.checkPlatform(boss, platform)) {
+                    boss.setY(platform.getMinY() - boss.getHeight());
+                    boss.setOnGround(true);
+                    bossOnPlatform = true;
+                    break;
+                }
+            }
+            if (!bossOnPlatform) {
+                boss.setOnGround(false);
+            }
+        }
+
+        for (Enemy minion : boss.getMinions()) {
+            boolean minionOnSolid = false;
+            for (Rectangle2D cover : covers) {
+                int result = Collision.resolveSolid(minion, cover);
+                if (result == -1) minionOnSolid = true;
+            }
+            if (minionOnSolid) {
+                minion.setOnGround(true);
+                continue;
+            }
+            if (Collision.checkPlatform(minion, ground)) {
+                minion.setY(ground.getMinY() - minion.getHeight());
+                minion.setOnGround(true);
+                continue;
+            }
+            boolean minionOnPlatform = false;
+            if (!minion.shouldDropFromPlatform()) {
+                for (Rectangle2D platform : platforms) {
+                    if (Collision.checkPlatform(minion, platform)) {
+                        minion.setY(platform.getMinY() - minion.getHeight());
+                        minion.setOnGround(true);
+                        minionOnPlatform = true;
+                        break;
+                    }
+                }
+            }
+            if (!minionOnPlatform) {
+                minion.setOnGround(false);
+            }
+        }
+    }
+
+    private void updateBossMinionAwareness() {
+        for (Enemy minion : boss.getMinions()) {
+            if (minion.isAlive()) {
+                minion.setNavigationSurfaces(navigationSurfaces);
+                minion.updateAwareness(player, visionBlockers);
+            }
+        }
+    }
+
+    private Rectangle2D[] mergeBlockers(Rectangle2D[] first, Rectangle2D[] second) {
+        Rectangle2D[] merged = new Rectangle2D[first.length + second.length];
+        System.arraycopy(first, 0, merged, 0, first.length);
+        System.arraycopy(second, 0, merged, first.length, second.length);
+        return merged;
+    }
+
+    private Boss createBoss() {
+        int stage = Math.max(1, Main.getStageNumber());
+        int maxHp = (int) Math.round(Config.BOSS_MAX_HP * 1.25 * (1.0 + stage * 0.10));
+        BossType type = Main.rollBossType();
+        return switch (type) {
+            case GROUND_SPIKE -> new GroundSpikeBoss(700, 340, player, maxHp, GROUND_Y, dashSurfaces);
+            case SUMMONER -> new SummonerBoss(700, 340, player, maxHp, GROUND_Y, dashSurfaces);
+            case FIREBALL -> new Boss(700, 340, player, maxHp);
+        };
+    }
+
+    private double bossPlatformWidth(int minTiles, int maxTiles) {
+        int tiles = minTiles + (int) (Math.random() * (maxTiles - minTiles + 1));
+        return tiles * 24.0;
+    }
+
+    private double bossRand(double min, double max) {
+        return min + Math.random() * (max - min);
+    }
+
+    private Rectangle2D createBossExitDoor() {
+        Rectangle2D best = null;
+        for (Rectangle2D platform : platforms) {
+            if (platform.getWidth() < 70) continue;
+            if (best == null || platform.getMinY() < best.getMinY()) {
+                best = platform;
+            }
+        }
+        if (best == null) {
+            best = ground;
+        }
+        double doorW = 46.0;
+        double doorH = 92.0;
+        double x = best.getMinX() + best.getWidth() / 2.0 - doorW / 2.0;
+        x = Math.max(best.getMinX() + 6, Math.min(x, best.getMaxX() - doorW - 6));
+        return new Rectangle2D(x, best.getMinY() - doorH, doorW, doorH);
+    }
+
+    private void checkBossExitDoor() {
+        if (bossExitDoor == null || transitioning) return;
+        if (Collision.checkAABB(player.getHitbox(), bossExitDoor)) {
+            transitioning = true;
+            this.stop();
+            Main.advanceAfterBoss();
+            Main.startLevel2();
         }
     }
 
@@ -384,17 +593,31 @@ public class BossScene extends AnimationTimer {
      * 使用背包快捷鍵。
      */
     private void handleInventoryKey(KeyCode key) {
-        PickupType type = switch (key) {
-            case DIGIT1 -> PickupType.SMALL_POTION;
-            case DIGIT2 -> PickupType.LARGE_POTION;
-            case DIGIT3 -> PickupType.FIRE_SCROLL;
-            case DIGIT4 -> PickupType.BOMB;
-            case DIGIT5 -> PickupType.ICE_SCROLL;
-            default -> null;
-        };
-        if (type != null) {
-            inventory.use(type, new UseContext(player, null, boss));
+        int slotIndex = keyToSlotIndex(key);
+        if (slotIndex < 0) return;
+
+        selectedInventorySlot = slotIndex;
+        if (trySwapGroundItem(slotIndex)) {
+            return;
         }
+        inventory.useSlot(slotIndex, new UseContext(player, null, boss, bombs));
+    }
+
+    private void tryResolvePlayerStandUp() {
+        if (!player.wantsToStandUp()) return;
+
+        Rectangle2D standingHitbox = player.getStandingHitbox();
+        for (Rectangle2D platform : platforms) {
+            if (Collision.checkAABB(standingHitbox, platform)) {
+                return;
+            }
+        }
+        for (Rectangle2D cover : covers) {
+            if (Collision.checkAABB(standingHitbox, cover)) {
+                return;
+            }
+        }
+        player.standUp();
     }
 
     /**
@@ -408,7 +631,10 @@ public class BossScene extends AnimationTimer {
         initialSnapshot.restoreInventory(inventory);
         pickupItems.clear();
         pickupItems.addAll(initialSnapshot.createPickupItems());
-        boss = new Boss(700, 340, player);
+        goldPickups.clear();
+        goldPickups.addAll(initialSnapshot.createGoldPickups());
+        bombs.clear();
+        boss = createBoss();
 
         phase2Triggered = false;
         phase3Triggered = false;
@@ -429,15 +655,48 @@ public class BossScene extends AnimationTimer {
      * 命中後 Boss 呼叫 takeDamage()，由 BossStateMachine.onHit() 處理扣血與狀態切換。
      */
     private void checkPlayerAttackVsBoss() {
+        destroyHostileProjectilesInAttackRange();
+
         // canHit()：正在攻擊中且本次揮擊尚未命中過，確保每次 J 只造成一次傷害
         if (!player.canHit()) return;
 
         Rectangle2D atkBox = player.getAttackBox();
         if (atkBox == null) return;
 
-        if (Collision.checkAABB(atkBox, boss.getHitbox())) {
+        if (Collision.checkAABB(atkBox, boss.getHitbox()) && player.isAttackHitting(boss.getHitbox())) {
             boss.takeDamage(Player.ATTACK_DAMAGE);
             player.markHit();   // 標記命中，本次揮擊結束前不再傷害 Boss
+        }
+        for (Enemy minion : boss.getMinions()) {
+            if (!minion.isAlive()) continue;
+            if (Collision.checkAABB(atkBox, minion.getHitbox()) && player.isAttackHitting(minion.getHitbox())) {
+                minion.takeDamage(Player.ATTACK_DAMAGE);
+                player.markHit();
+                break;
+            }
+        }
+    }
+
+    private void destroyHostileProjectilesInAttackRange() {
+        Rectangle2D atkBox = player.getAttackBox();
+        if (atkBox == null) return;
+
+        for (Fireball projectile : boss.getProjectiles()) {
+            destroyProjectileIfSlashed(atkBox, projectile);
+        }
+        for (Enemy minion : boss.getMinions()) {
+            if (!(minion instanceof RangedEnemy ranged)) continue;
+            for (Fireball projectile : ranged.getProjectiles()) {
+                destroyProjectileIfSlashed(atkBox, projectile);
+            }
+        }
+    }
+
+    private void destroyProjectileIfSlashed(Rectangle2D atkBox, Fireball projectile) {
+        if (!projectile.isAlive()) return;
+        if (Collision.checkAABB(atkBox, projectile.getHitbox())
+            && player.isAttackHitting(projectile.getHitbox())) {
+            projectile.destroy();
         }
     }
 
@@ -454,6 +713,15 @@ public class BossScene extends AnimationTimer {
                 fireball.destroy();
                 continue;
             }
+
+            for (Enemy minion : boss.getMinions()) {
+                if (minion.isAlive() && Collision.checkAABB(fireball.getHitbox(), minion.getHitbox())) {
+                    minion.takeDamage(fireball.getDamage());
+                    fireball.destroy();
+                    break;
+                }
+            }
+            if (!fireball.isAlive()) continue;
 
             destroyFireballOnWall(fireball);
         }
@@ -472,6 +740,12 @@ public class BossScene extends AnimationTimer {
 
         for (Rectangle2D platform : platforms) {
             if (Collision.checkAABB(fireball.getHitbox(), platform)) {
+                fireball.destroy();
+                return;
+            }
+        }
+        for (Rectangle2D cover : covers) {
+            if (Collision.checkAABB(fireball.getHitbox(), cover)) {
                 fireball.destroy();
                 return;
             }
@@ -522,6 +796,11 @@ public class BossScene extends AnimationTimer {
                 return true;
             }
         }
+        for (Rectangle2D cover : covers) {
+            if (Collision.checkAABB(fireball.getHitbox(), cover)) {
+                return true;
+            }
+        }
         return false;
     }
 
@@ -546,8 +825,9 @@ public class BossScene extends AnimationTimer {
         for (PickupItem item : pickupItems) {
             if (item.isPickedUp()) continue;
             if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
-                inventory.add(item.getType());
-                item.markPickedUp();
+                if (inventory.add(item.getType(), item.getQuantity())) {
+                    item.markPickedUp();
+                }
             }
         }
         pickupItems.removeIf(PickupItem::isPickedUp);
@@ -558,19 +838,158 @@ public class BossScene extends AnimationTimer {
      */
     private void spawnBossDrops() {
         PickupType rare = random.nextBoolean() ? PickupType.FIRE_SCROLL : PickupType.ICE_SCROLL;
-        spawnPickup(rare, boss.getX(), boss.getY() + boss.getHeight() - PickupItem.SIZE);
+        addPickup(rare, boss.getX(), boss.getY() + boss.getHeight() - PickupItem.SIZE);
 
         if (random.nextDouble() < 0.65) {
-            spawnPickup(PickupType.LARGE_POTION,
+            addPickup(PickupType.LARGE_POTION,
                         boss.getX() + PickupItem.SIZE + 6,
                         boss.getY() + boss.getHeight() - PickupItem.SIZE);
         }
+        addGold(30 + random.nextInt(71),
+                boss.getX() + PickupItem.SIZE * 2,
+                boss.getY() + boss.getHeight() - GoldPickup.SIZE);
     }
 
-    private void spawnPickup(PickupType type, double x, double y) {
-        double px = Math.max(0, Math.min(x, Config.WINDOW_WIDTH - PickupItem.SIZE));
-        double py = Math.max(0, Math.min(y, Config.WINDOW_HEIGHT - Config.GROUND_THICKNESS - PickupItem.SIZE));
-        pickupItems.add(type.create(px, py));
+    private void checkBossMinionsVsPlayer() {
+        for (Enemy minion : boss.getMinions()) {
+            if (!minion.isAlive()) continue;
+            if (Collision.checkAABB(minion.getHitbox(), player.getHitbox())) {
+                minion.tryDamagePlayer(player);
+            }
+        }
+    }
+
+    private void checkBossMinionProjectilesVsPlayer() {
+        for (Enemy minion : boss.getMinions()) {
+            if (!(minion instanceof RangedEnemy ranged)) continue;
+            for (Fireball projectile : ranged.getProjectiles()) {
+                if (!projectile.isAlive()) continue;
+                if (isFireballTouchingWall(projectile)) {
+                    projectile.destroy();
+                    continue;
+                }
+                if (Collision.checkAABB(projectile.getHitbox(), player.getHitbox())) {
+                    player.takeDamage(projectile.getDamage());
+                    projectile.destroy();
+                }
+            }
+        }
+    }
+
+    private void checkPlayerIceProjectilesVsBoss() {
+        for (IceProjectile projectile : player.getIceProjectiles()) {
+            if (!projectile.isAlive()) continue;
+            if (boss.isAlive() && Collision.checkAABB(projectile.getHitbox(), boss.getHitbox())) {
+                boss.applySlow(IceProjectile.BOSS_SLOW_DURATION, IceProjectile.BOSS_SLOW_MULTIPLIER);
+                projectile.destroy();
+                continue;
+            }
+
+            for (Enemy minion : boss.getMinions()) {
+                if (minion.isAlive() && Collision.checkAABB(projectile.getHitbox(), minion.getHitbox())) {
+                    minion.applySlow(IceProjectile.SLOW_DURATION, IceProjectile.SLOW_MULTIPLIER);
+                    projectile.destroy();
+                    break;
+                }
+            }
+            if (projectile.isAlive()) destroyFireballOnWall(projectile);
+        }
+    }
+
+    private void checkGroundSpikesVsPlayer() {
+        for (GroundSpike spike : boss.getGroundSpikes()) {
+            spike.tryHit(player);
+        }
+    }
+
+    private void addPickup(PickupType type, double x, double y) {
+        addPickup(type, x, y, 1);
+    }
+
+    private void addPickup(PickupType type, double x, double y, int quantity) {
+        pickupItems.add(itemSpawnManager.spawn(type, x, y, quantity, pickupItems));
+    }
+
+    private void addGold(int amount, double x, double y) {
+        goldPickups.add(goldSpawnManager.spawn(amount, x, y, pickupItems, goldPickups));
+    }
+
+    private void checkGoldPickups() {
+        for (GoldPickup gold : goldPickups) {
+            if (gold.isPickedUp()) continue;
+            if (Collision.checkAABB(player.getHitbox(), gold.getHitbox())) {
+                Main.addGold(gold.getAmount());
+                gold.markPickedUp();
+            }
+        }
+        goldPickups.removeIf(GoldPickup::isPickedUp);
+    }
+
+    private void updateBombs(double dt) {
+        for (BombEntity bomb : bombs) {
+            bomb.update(dt);
+            if (bomb.shouldApplyDamage()) {
+                applyBombDamage(bomb);
+                bomb.markDamageApplied();
+            }
+        }
+        bombs.removeIf(bomb -> !bomb.isAlive());
+    }
+
+    private void applyBombDamage(BombEntity bomb) {
+        if (boss.isAlive()) {
+            double dx = boss.getX() + boss.getWidth() / 2.0 - bomb.getX();
+            double dy = boss.getY() + boss.getHeight() / 2.0 - bomb.getY();
+            if (Math.sqrt(dx * dx + dy * dy) <= BombEntity.RADIUS) {
+                boss.takeDamage(BombEntity.DAMAGE);
+            }
+        }
+        for (Enemy minion : boss.getMinions()) {
+            if (!minion.isAlive()) continue;
+            double dx = minion.getX() + minion.getWidth() / 2.0 - bomb.getX();
+            double dy = minion.getY() + minion.getHeight() / 2.0 - bomb.getY();
+            if (Math.sqrt(dx * dx + dy * dy) <= BombEntity.RADIUS) {
+                minion.takeDamage(BombEntity.DAMAGE);
+            }
+        }
+    }
+
+    private boolean trySwapGroundItem(int slotIndex) {
+        PickupItem groundItem = findBlockedPickupUnderPlayer();
+        if (groundItem == null) return false;
+
+        InventorySlot dropped = inventory.replaceSlot(slotIndex,
+            groundItem.getType(), groundItem.getQuantity());
+        if (dropped == null) return false;
+
+        groundItem.markPickedUp();
+        addPickup(dropped.getType(),
+            player.getX(),
+            player.getY() + player.getHeight() - PickupItem.SIZE,
+            dropped.getCount());
+        pickupItems.removeIf(PickupItem::isPickedUp);
+        return true;
+    }
+
+    private PickupItem findBlockedPickupUnderPlayer() {
+        if (!inventory.isFull()) return null;
+        for (PickupItem item : pickupItems) {
+            if (item.isPickedUp()) continue;
+            if (inventory.contains(item.getType())) continue;
+            if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
+                return item;
+            }
+        }
+        return null;
+    }
+
+    private int keyToSlotIndex(KeyCode key) {
+        return switch (key) {
+            case U -> 0;
+            case I -> 1;
+            case O -> 2;
+            default -> -1;
+        };
     }
 
     // ── 階段管理 ─────────────────────────────────────────────────────────────
@@ -640,11 +1059,22 @@ public class BossScene extends AnimationTimer {
 
         // 3. 閃躲平台（TODO: 換成石板 Tileset）
         drawPlatforms(gc);
+        drawCovers(gc);
 
         // 4. 地板道具
         for (PickupItem item : pickupItems) {
             item.draw(gc);
         }
+
+        for (GoldPickup gold : goldPickups) {
+            gold.draw(gc);
+        }
+
+        for (BombEntity bomb : bombs) {
+            bomb.draw(gc);
+        }
+
+        drawBossExitDoor(gc);
 
         // 5. Boss（含投射物、血量條頭頂版、狀態標籤）
         boss.draw(gc);
@@ -666,9 +1096,7 @@ public class BossScene extends AnimationTimer {
         }
 
         // 9. 結果畫面（勝利 / GAME OVER）
-        if (boss.getCurrentState() == BossState.DEAD) {
-            drawVictoryOverlay(gc);
-        } else if (!player.isAlive()) {
+        if (!player.isAlive() && boss.getCurrentState() != BossState.DEAD) {
             drawGameOverOverlay(gc);
         }
     }
@@ -691,6 +1119,29 @@ public class BossScene extends AnimationTimer {
         }
     }
 
+    private void drawCovers(GraphicsContext gc) {
+        for (Rectangle2D cover : covers) {
+            gc.setFill(Color.web("#4e4a46"));
+            gc.fillRect(cover.getMinX(), cover.getMinY(), cover.getWidth(), cover.getHeight());
+            gc.setFill(Color.web("#74706a"));
+            gc.fillRect(cover.getMinX(), cover.getMinY(), cover.getWidth(), 5);
+        }
+    }
+
+    private void drawBossExitDoor(GraphicsContext gc) {
+        if (bossExitDoor == null) return;
+        gc.save();
+        gc.setGlobalAlpha(0.35);
+        gc.setFill(Color.GOLD);
+        gc.fillRect(bossExitDoor.getMinX(), bossExitDoor.getMinY(),
+                    bossExitDoor.getWidth(), bossExitDoor.getHeight());
+        gc.restore();
+        gc.setStroke(Color.GOLD);
+        gc.setLineWidth(3);
+        gc.strokeRect(bossExitDoor.getMinX(), bossExitDoor.getMinY(),
+                      bossExitDoor.getWidth(), bossExitDoor.getHeight());
+    }
+
     /**
      * 繪製 HUD：
      * <ul>
@@ -702,7 +1153,16 @@ public class BossScene extends AnimationTimer {
      */
     private void drawHUD(GraphicsContext gc) {
         HudRenderer.drawPlayerStatus(gc, player, "BOSS");
+        HudRenderer.drawGold(gc, Main.getGold());
         drawBossHpBar(gc);
+        HudRenderer.drawInventorySlots(gc, inventory, selectedInventorySlot);
+        PickupItem blockedItem = findBlockedPickupUnderPlayer();
+        if (blockedItem != null) {
+            HudRenderer.drawBackpackFullPrompt(gc, inventory, blockedItem);
+        }
+        if (inventoryOpen) {
+            HudRenderer.drawInventoryOverlay(gc, inventory, selectedInventorySlot);
+        }
     }
 
     /**
@@ -730,8 +1190,9 @@ public class BossScene extends AnimationTimer {
         // Boss 名稱（TODO: 換成設計好的字型與角色名稱）
         gc.setFill(Color.LIGHTGRAY);
         gc.setFont(Font.font(11));
-        gc.fillText("DARK OVERLORD",
-                    barX + BOSS_BAR_W / 2.0 - 44,
+        String bossName = boss.getDisplayName();
+        gc.fillText(bossName,
+                    barX + BOSS_BAR_W / 2.0 - bossName.length() * 3.2,
                     barY - 2);
 
         // 血量條背景（深紅底）
@@ -757,21 +1218,6 @@ public class BossScene extends AnimationTimer {
         gc.fillText(boss.getHp() + " / " + boss.getMaxHp(),
                     barX + BOSS_BAR_W + 6, barY + 13);
 
-        drawInventoryHUD(gc);
-    }
-
-    /**
-     * 依 Inventory/PickupType 自動繪製背包數量。
-     */
-    private void drawInventoryHUD(GraphicsContext gc) {
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font(11));
-        double x = 12;
-        double y = Config.WINDOW_HEIGHT - 62;
-        for (PickupType type : inventory.getDisplayTypes()) {
-            gc.fillText(type.getHudLabel() + ": " + inventory.getCount(type), x, y);
-            y += 12;
-        }
     }
 
     /**
@@ -815,28 +1261,6 @@ public class BossScene extends AnimationTimer {
         gc.fillText(phaseText, textX, textY);
 
         gc.restore();
-    }
-
-    /**
-     * 繪製 Boss 死亡後的勝利畫面（"YOU WIN!"）。
-     * 在切換至 EndScene 前的 WIN_DELAY 秒內持續顯示。
-     *
-     * @param gc 畫布繪圖上下文
-     */
-    private void drawVictoryOverlay(GraphicsContext gc) {
-        // 半透明金色光暈
-        gc.save();
-        gc.setGlobalAlpha(0.25);
-        gc.setFill(Color.GOLD);
-        gc.fillRect(0, 0, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
-        gc.restore();
-
-        // 主文字
-        gc.setFill(Color.GOLD);
-        gc.setFont(Font.font(64));
-        gc.fillText("YOU WIN!",
-                    Config.WINDOW_WIDTH / 2.0 - 165,
-                    Config.WINDOW_HEIGHT / 2.0);
     }
 
     /**

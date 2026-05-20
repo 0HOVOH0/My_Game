@@ -91,6 +91,8 @@ public class Level1Scene extends AnimationTimer {
     /** 玩家死亡後是否按下了 R 鍵，觸發重啟 Level1 */
     private boolean rKeyPressed = false;
 
+    private double playerPlatformDropTimer = 0;
+
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
@@ -107,6 +109,7 @@ public class Level1Scene extends AnimationTimer {
         gc = canvas.getGraphicsContext2D();
 
         Scene javafxScene = CanvasSceneSupport.createScaledCanvasScene(stage, canvas);
+        Fireball.setWorldBounds(Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
 
         // ── 初始化玩家 ────────────────────────────────────────────────────────
         // 玩家出生在 P1 上方，會立即落下並踩到 P1（P1 頂面 y=500，玩家高 42）
@@ -219,9 +222,13 @@ public class Level1Scene extends AnimationTimer {
 
         // 1. 玩家物理更新（內含重力、鍵盤輸入、攻擊計時）
         player.update(dt);
+        updatePlayerPlatformDrop(dt);
 
         // 2. 碰撞判定：地板與所有平台
         resolvePlatformCollisions();
+
+        // 2.5 若玩家放開 S，且頭頂空間足夠，恢復站立
+        tryResolvePlayerStandUp();
 
         // 3. 玩家左右邊界：不讓玩家走出畫面
         if (player.getX() < 0)
@@ -252,16 +259,42 @@ public class Level1Scene extends AnimationTimer {
         }
 
         // 再逐一檢查平台（依陣列順序，找到第一個命中即停止）
-        for (Rectangle2D platform : platforms) {
-            if (Collision.checkPlatform(player, platform)) {
-                player.setY(platform.getMinY() - player.getHeight());
-                player.setOnGround(true);
-                return;
+        if (playerPlatformDropTimer <= 0) {
+            for (Rectangle2D platform : platforms) {
+                if (Collision.checkPlatform(player, platform)) {
+                    player.setY(platform.getMinY() - player.getHeight());
+                    player.setOnGround(true);
+                    return;
+                }
             }
         }
 
         // 沒有踩到任何表面：玩家在空中
         player.setOnGround(false);
+    }
+
+    private void updatePlayerPlatformDrop(double dt) {
+        if (playerPlatformDropTimer > 0) {
+            playerPlatformDropTimer -= dt;
+            if (playerPlatformDropTimer < 0) playerPlatformDropTimer = 0;
+        }
+        if (player.consumePlatformDropRequest()) {
+            playerPlatformDropTimer = 0.22;
+            player.setY(player.getY() + 5);
+            player.setOnGround(false);
+        }
+    }
+
+    private void tryResolvePlayerStandUp() {
+        if (!player.wantsToStandUp()) return;
+
+        Rectangle2D standingHitbox = player.getStandingHitbox();
+        for (Rectangle2D platform : platforms) {
+            if (Collision.checkAABB(standingHitbox, platform)) {
+                return;
+            }
+        }
+        player.standUp();
     }
 
     /**
@@ -409,10 +442,6 @@ public class Level1Scene extends AnimationTimer {
         gc.strokeRect(goalDoor.getMinX(), goalDoor.getMinY(),
                       goalDoor.getWidth(), goalDoor.getHeight());
 
-        // 門上方標籤
-        gc.setFill(Color.YELLOW);
-        gc.setFont(Font.font(13));
-        gc.fillText("GOAL", goalDoor.getMinX() + 4, goalDoor.getMinY() - 6);
     }
 
     /**

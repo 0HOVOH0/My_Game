@@ -5,7 +5,11 @@ import javafx.scene.paint.Color;
 public class FireScrollItem extends PickupItem {
 
     public FireScrollItem(double x, double y) {
-        super(x, y, PickupType.FIRE_SCROLL);
+        this(x, y, 1);
+    }
+
+    public FireScrollItem(double x, double y, int quantity) {
+        super(x, y, PickupType.FIRE_SCROLL, quantity);
     }
 
     @Override

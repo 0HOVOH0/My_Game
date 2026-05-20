@@ -20,6 +20,9 @@ public class Fireball {
     /** 命中敵人或 Boss 的傷害 */
     public static final int DAMAGE = Config.FIREBALL_DAMAGE;
 
+    private static double worldWidth = Config.WINDOW_WIDTH;
+    private static double worldHeight = Config.WINDOW_HEIGHT;
+
     private double x;
     private double y;
     private final double dirX;
@@ -30,6 +33,7 @@ public class Fireball {
     private final Color fillColor;
     private final Color strokeColor;
     private boolean alive;
+    private static final double HITBOX_SCALE = 1.22;
 
     /**
      * 建立火球。
@@ -88,8 +92,8 @@ public class Fireball {
         x += dirX * speed * deltaTime;
         y += dirY * speed * deltaTime;
 
-        if (x + size < 0 || x > Config.WINDOW_WIDTH ||
-            y + size < 0 || y > Config.WINDOW_HEIGHT) {
+        if (x + size < 0 || x > worldWidth ||
+            y + size < 0 || y > worldHeight) {
             alive = false;
         }
     }
@@ -113,7 +117,9 @@ public class Fireball {
 
     /** 取得火球碰撞框 */
     public Rectangle2D getHitbox() {
-        return new Rectangle2D(x, y, size, size);
+        double expanded = size * HITBOX_SCALE;
+        double offset = (expanded - size) / 2.0;
+        return new Rectangle2D(x - offset, y - offset, expanded, expanded);
     }
 
     /** 標記火球消失 */
@@ -133,4 +139,9 @@ public class Fireball {
 
     /** 回傳尺寸 */
     public double getSize() { return size; }
+
+    public static void setWorldBounds(double width, double height) {
+        worldWidth = width;
+        worldHeight = height;
+    }
 }

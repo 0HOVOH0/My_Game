@@ -112,4 +112,27 @@ public final class Collision {
 
         return entityBottom >= platformTop && entityBottom <= platformBottom;
     }
+
+    /**
+     * 雙向實體碰撞解析，適用於牆、箱子、石柱等 solid obstacle。
+     *
+     * @return -1 = 從上方落地，-2 = 頭撞到底部，1/2 = 左右側推開，0 = 未碰撞
+     */
+    public static int resolveSolid(Entity e, Rectangle2D solid) {
+        Rectangle2D hitbox = e.getHitbox();
+        if (!checkAABB(hitbox, solid)) return 0;
+
+        double overlapX = getOverlapX(hitbox, solid);
+        double overlapY = getOverlapY(hitbox, solid);
+
+        if (Math.abs(overlapX) < Math.abs(overlapY)) {
+            e.setX(e.getX() + overlapX);
+            e.setVelocityX(0);
+            return overlapX < 0 ? 1 : 2;
+        }
+
+        e.setY(e.getY() + overlapY);
+        e.setVelocityY(0);
+        return overlapY < 0 ? -1 : -2;
+    }
 }

@@ -37,6 +37,15 @@ public final class Config {
     /** 玩家水平移動速度（像素 / 秒） */
     public static final double PLAYER_SPEED = 200.0;
 
+    /** 玩家蹲下時水平速度倍率 */
+    public static final double PLAYER_CROUCH_SPEED_MULTIPLIER = 0.5;
+
+    /** 玩家蹲下時碰撞框高度倍率 */
+    public static final double PLAYER_CROUCH_HEIGHT_MULTIPLIER = 0.5;
+
+    /** 空中按 S 觸發快速下落的最小下落速度 */
+    public static final double PLAYER_FAST_FALL_SPEED = 760.0;
+
     // ── 遊戲設定 ──────────────────────────────────────────────────────────────
 
     /** 目標幀率（FPS） */
@@ -55,7 +64,10 @@ public final class Config {
     public static final double PLAYER_MAX_MANA = 100.0;
 
     /** 玩家每秒自動恢復的魔力量 */
-    public static final double PLAYER_MANA_REGEN_PER_SEC = 8.0;
+    public static final double PLAYER_MANA_REGEN_PER_SEC = 3.5;
+
+    /** 背包可攜帶的不同道具種類數量。 */
+    public static final int INVENTORY_SIZE = 3;
 
     /** 火球施放冷卻時間（秒） */
     public static final double FIREBALL_COOLDOWN = 2.0;

@@ -4,16 +4,17 @@ import javafx.scene.paint.Color;
 
 public class BombItem extends PickupItem {
 
-    private static final double RADIUS = 130.0;
-    private static final int DAMAGE = 80;
-
     public BombItem(double x, double y) {
-        super(x, y, PickupType.BOMB);
+        this(x, y, 1);
+    }
+
+    public BombItem(double x, double y, int quantity) {
+        super(x, y, PickupType.BOMB, quantity);
     }
 
     @Override
     public void use(UseContext context) {
-        context.damageEnemiesNearPlayer(RADIUS, DAMAGE);
+        context.placeBomb();
     }
 
     @Override

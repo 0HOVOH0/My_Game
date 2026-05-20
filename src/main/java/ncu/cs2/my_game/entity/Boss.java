@@ -31,13 +31,20 @@ public class Boss extends Entity {
     // ── 依賴 ─────────────────────────────────────────────────────────────────
 
     /** 玩家參照；傳給 FSM 用於追蹤位置，以及決定投射物方向 */
-    private final Player player;
+    protected final Player player;
 
     /** Boss 專屬有限狀態機，管理所有 AI 狀態轉換 */
     private final BossStateMachine fsm;
 
     /** 目前存活的投射物列表；由 shootProjectile() 新增，update() 清除出界的 */
-    private final List<Fireball> projectiles;
+    protected final List<Fireball> projectiles;
+    private double slowTimer;
+    private double slowMultiplier = 1.0;
+    private boolean onGround;
+    private double jumpCooldown;
+    private Rectangle2D[] dashBlockers = new Rectangle2D[0];
+    private Rectangle2D[] dashSurfaces = new Rectangle2D[0];
+    private double dashWorldWidth = Config.WINDOW_WIDTH;
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -51,9 +58,15 @@ public class Boss extends Entity {
      * @param player 玩家參照（FSM 追蹤位置用）
      */
     public Boss(double x, double y, Player player) {
-        super(x, y, BOSS_WIDTH, BOSS_HEIGHT, Config.BOSS_MAX_HP);
+        this(x, y, player, Config.BOSS_MAX_HP);
+    }
+
+    public Boss(double x, double y, Player player, int maxHp) {
+        super(x, y, BOSS_WIDTH, BOSS_HEIGHT, maxHp);
         this.player      = player;
         this.projectiles = new ArrayList<>();
+        this.onGround    = false;
+        this.jumpCooldown = 0.8;
         // 將 this::shootProjectile 傳入 FSM，讓 RAGE 狀態直接呼叫
         this.fsm         = new BossStateMachine(this, player, this::shootProjectile);
     }
@@ -70,12 +83,21 @@ public class Boss extends Entity {
     public void update(double deltaTime) {
         // 1. FSM 決定水平速度與狀態轉換
         fsm.update(deltaTime);
+        if (slowTimer > 0) {
+            slowTimer -= deltaTime;
+            if (slowTimer <= 0) {
+                slowTimer = 0;
+                slowMultiplier = 1.0;
+            }
+        }
+        if (jumpCooldown > 0) jumpCooldown -= deltaTime;
+        tryJumpTowardPlayer();
 
         // 2. 套用重力（累加 velocityY）
         Gravity.apply(this, deltaTime);
 
         // 3. 依速度更新座標
-        x += velocityX * deltaTime;
+        x += velocityX * slowMultiplier * deltaTime;
         y += velocityY * deltaTime;
 
         // 4. 移除已出界或被消滅的投射物，再更新剩餘的
@@ -95,6 +117,69 @@ public class Boss extends Entity {
      */
     public void takeDamage(int amount) {
         fsm.onHit(amount);
+    }
+
+    public void applySlow(double duration, double multiplier) {
+        slowTimer = Math.max(slowTimer, duration);
+        slowMultiplier = Math.min(slowMultiplier, multiplier);
+    }
+
+    public void setOnGround(boolean onGround) {
+        this.onGround = onGround;
+        if (onGround && velocityY > 0) velocityY = 0;
+    }
+
+    public void configureDashNavigation(Rectangle2D[] blockers,
+                                        Rectangle2D[] surfaces,
+                                        double worldWidth) {
+        dashBlockers = blockers == null ? new Rectangle2D[0] : blockers;
+        dashSurfaces = surfaces == null ? new Rectangle2D[0] : surfaces;
+        dashWorldWidth = worldWidth;
+    }
+
+    public boolean canStartDashToward(Entity target, double dashSpeed, double dashDuration) {
+        if (!onGround) return false;
+
+        double bossCenterX = x + width / 2.0;
+        double targetCenterX = target.getX() + target.getWidth() / 2.0;
+        double dx = targetCenterX - bossCenterX;
+        double absDx = Math.abs(dx);
+        double absDy = Math.abs((target.getY() + target.getHeight() / 2.0) - (y + height / 2.0));
+        if (absDx < 70.0 || absDx > 260.0) return false;
+        if (absDy > 95.0) return false;
+
+        double dir = dx >= 0 ? 1.0 : -1.0;
+        double travel = dashSpeed * dashDuration;
+        int samples = 8;
+        for (int i = 1; i <= samples; i++) {
+            double testX = x + dir * travel * i / samples;
+            Rectangle2D predicted = new Rectangle2D(testX, y, width, height);
+            if (predicted.getMinX() < 0 || predicted.getMaxX() > dashWorldWidth) return false;
+            for (Rectangle2D blocker : dashBlockers) {
+                if (predicted.intersects(blocker)) return false;
+            }
+        }
+
+        double endX = x + dir * travel;
+        Rectangle2D footProbe = new Rectangle2D(endX + 4, y + height, width - 8, 18);
+        for (Rectangle2D surface : dashSurfaces) {
+            if (footProbe.intersects(surface)) return true;
+        }
+        return false;
+    }
+
+    private void tryJumpTowardPlayer() {
+        if (!onGround || jumpCooldown > 0) return;
+
+        double bossCenter = x + width / 2.0;
+        double playerCenter = player.getX() + player.getWidth() / 2.0;
+        double horizontalDistance = Math.abs(playerCenter - bossCenter);
+        boolean playerHigher = player.getY() + player.getHeight() < y + height - 28.0;
+        if (playerHigher && horizontalDistance < 260.0) {
+            velocityY = Config.JUMP_FORCE * 0.88;
+            onGround = false;
+            jumpCooldown = 1.5;
+        }
     }
 
     // ── 投射物 ────────────────────────────────────────────────────────────────
@@ -250,6 +335,14 @@ public class Boss extends Entity {
 
     /** 回傳目前 FSM 狀態（供 GameScene 判斷勝負條件） */
     public BossState getCurrentState() { return fsm.getCurrentState(); }
+
+    public BossType getBossType() { return BossType.FIREBALL; }
+
+    public String getDisplayName() { return "DARK OVERLORD"; }
+
+    public List<GroundSpike> getGroundSpikes() { return List.of(); }
+
+    public List<Enemy> getMinions() { return List.of(); }
 
     /**
      * 回傳所有存活的投射物列表（供 GameScene 做玩家碰撞判定）。

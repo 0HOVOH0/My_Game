@@ -1,8 +1,11 @@
 package ncu.cs2.my_game.item;
 
 import ncu.cs2.my_game.entity.Boss;
+import ncu.cs2.my_game.entity.BombEntity;
 import ncu.cs2.my_game.entity.Enemy;
 import ncu.cs2.my_game.entity.Player;
+
+import java.util.List;
 
 /**
  * 道具使用時需要的場景上下文。
@@ -12,14 +15,30 @@ public class UseContext {
     private final Player player;
     private final Enemy[] enemies;
     private final Boss boss;
+    private final List<BombEntity> bombs;
 
     public UseContext(Player player, Enemy[] enemies, Boss boss) {
+        this(player, enemies, boss, null);
+    }
+
+    public UseContext(Player player, Enemy[] enemies, Boss boss, List<BombEntity> bombs) {
         this.player = player;
         this.enemies = enemies;
         this.boss = boss;
+        this.bombs = bombs;
     }
 
     public Player getPlayer() { return player; }
+
+    public void placeBomb() {
+        if (bombs == null) return;
+        bombs.add(new BombEntity(player.getX() + player.getWidth() / 2.0,
+            player.getY() + player.getHeight() / 2.0));
+    }
+
+    public void shootIceProjectile() {
+        player.castIceProjectile();
+    }
 
     /**
      * 對玩家附近的敵人造成範圍傷害。

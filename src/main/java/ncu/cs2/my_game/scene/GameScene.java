@@ -47,6 +47,7 @@ public class GameScene {
     public void start() {
         Canvas canvas = new Canvas(Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
         Scene  scene  = CanvasSceneSupport.createScaledCanvasScene(stage, canvas);
+        Fireball.setWorldBounds(Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
 
         // 初始化玩家與 Boss（Boss 需要 Player 參照供 FSM 追蹤）
         player = new Player(100, 300);
@@ -99,6 +100,7 @@ public class GameScene {
         // ── 2. 地板碰撞 ────────────────────────────────────────────────────────
         resolveGround(player);
         if (boss.isAlive()) resolveGroundBoss();
+        if (player.wantsToStandUp()) player.standUp();
 
         // ── 3. 玩家左右邊界 ────────────────────────────────────────────────────
         if (player.getX() < 0)
@@ -111,8 +113,10 @@ public class GameScene {
         // ── 4. 玩家近戰攻擊命中 Boss ───────────────────────────────────────────
         Rectangle2D playerAtk = player.getAttackBox();
         if (playerAtk != null &&
-                Collision.checkAABB(playerAtk, boss.getHitbox())) {
+                Collision.checkAABB(playerAtk, boss.getHitbox()) &&
+                player.isAttackHitting(boss.getHitbox())) {
             boss.takeDamage(Player.ATTACK_DAMAGE);
+            player.markHit();
         }
 
         // ── 4.5 玩家火球命中 Boss 或地板 ─────────────────────────────────────
@@ -218,9 +222,7 @@ public class GameScene {
      * @param gc 畫布繪圖上下文
      */
     private void drawOutcome(GraphicsContext gc) {
-        if (boss.getCurrentState() == BossState.DEAD) {
-            drawCenteredText(gc, "YOU WIN!", Color.GOLD, 64);
-        } else if (!player.isAlive()) {
+        if (!player.isAlive()) {
             drawCenteredText(gc, "GAME OVER", Color.RED, 64);
         }
     }

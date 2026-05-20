@@ -4,6 +4,7 @@ import javafx.geometry.Rectangle2D;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.input.KeyCode;
 import javafx.scene.paint.Color;
+import javafx.scene.shape.ArcType;
 import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.physics.Gravity;
 
@@ -24,13 +25,20 @@ public class Player extends Entity {
     public static final int    ATTACK_DAMAGE   = 20;
 
     /** 攻擊判定框持續時間（秒） */
-    public static final double ATTACK_DURATION = 0.2;
+    public static final double ATTACK_DURATION = 0.28;
 
-    /** 攻擊判定框寬度（像素） */
-    public static final double ATTACK_BOX_W    = 30.0;
+    /** 近戰攻擊冷卻時間（秒），降低揮擊頻率。 */
+    public static final double ATTACK_COOLDOWN = 0.65;
 
-    /** 攻擊判定框高度（像素） */
-    public static final double ATTACK_BOX_H    = 34.0;
+    /** 半圓揮擊半徑（像素） */
+    public static final double ATTACK_ARC_RADIUS = 56.0;
+
+    /** 讓貼在玩家前半身的敵人也會被揮擊命中。 */
+    private static final double ATTACK_FRONT_BODY_REACH = 18.0;
+
+    /** 半圓揮擊碰撞 broad-phase 尺寸 */
+    public static final double ATTACK_BOX_W    = ATTACK_ARC_RADIUS;
+    public static final double ATTACK_BOX_H    = ATTACK_ARC_RADIUS * 2;
 
     // ── 火球常數 ─────────────────────────────────────────────────────────────
 
@@ -56,6 +64,9 @@ public class Player extends Entity {
     /** 面向方向；供火球決定發射方向 */
     private Direction facingDirection;
 
+    /** 目前是否處於蹲下狀態 */
+    private boolean isCrouching;
+
     /** 目前是否正在攻擊（攻擊判定框存在中） */
     private boolean isAttacking;
 
@@ -74,10 +85,16 @@ public class Player extends Entity {
     /** 攻擊判定框剩餘存在時間（秒） */
     private double attackTimer;
 
+    /** 攻擊冷卻剩餘時間（秒） */
+    private double attackCooldownTimer;
+
     // ── 火球 ─────────────────────────────────────────────────────────────────
 
     /** 目前仍存在的玩家火球 */
     private final List<Fireball> fireballs;
+
+    /** 目前仍存在的冰球 */
+    private final List<IceProjectile> iceProjectiles;
 
     /** 目前魔力量 */
     private double mana;
@@ -85,7 +102,7 @@ public class Player extends Entity {
     /** 火球術剩餘冷卻時間（秒）；0 時可再次施放 */
     private double fireballCooldownTimer;
 
-    /** 最近一次按 F 失敗是否因為魔力不足，用於 HUD 提示 */
+    /** 最近一次按 K 失敗是否因為魔力不足，用於 HUD 提示 */
     private boolean lastFireballFailedForMana;
 
     // ── 無敵與閃爍 ───────────────────────────────────────────────────────────
@@ -104,6 +121,11 @@ public class Player extends Entity {
     /** 目前正在按住的按鍵集合；由外部呼叫 handleKeyPressed/Released 維護 */
     private final Set<KeyCode> activeKeys;
 
+    private static final double CROUCH_HOLD_THRESHOLD = 0.18;
+    private double sHoldTimer;
+    private boolean sPendingCrouch;
+    private boolean platformDropRequested;
+
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
@@ -116,11 +138,14 @@ public class Player extends Entity {
         super(x, y, Config.PLAYER_WIDTH, Config.PLAYER_HEIGHT, Config.PLAYER_MAX_HP);
         facingRight    = true;
         facingDirection = Direction.RIGHT;
+        isCrouching    = false;
         isOnGround     = false;
         isAttacking    = false;
         attackLanded   = false;
         attackTimer    = 0;
+        attackCooldownTimer = 0;
         fireballs      = new ArrayList<>();
+        iceProjectiles = new ArrayList<>();
         mana           = Config.PLAYER_MAX_MANA;
         fireballCooldownTimer = 0;
         lastFireballFailedForMana = false;
@@ -128,6 +153,9 @@ public class Player extends Entity {
         flickerTimer   = 0;
         flickerVisible  = true;
         activeKeys     = new HashSet<>();
+        sHoldTimer = 0;
+        sPendingCrouch = false;
+        platformDropRequested = false;
     }
 
     // ── update ────────────────────────────────────────────────────────────────
@@ -144,6 +172,7 @@ public class Player extends Entity {
 
         // 2. 依當前按鍵決定水平速度
         applyMovementInput();
+        updateCrouchHold(deltaTime);
 
         // 3. 更新座標
         x += velocityX * deltaTime;
@@ -155,6 +184,7 @@ public class Player extends Entity {
         // 5. 魔力、火球冷卻與投射物更新
         updateMana(deltaTime);
         updateFireballs(deltaTime);
+        updateIceProjectiles(deltaTime);
 
         // 6. 無敵與閃爍計時
         updateInvincibility(deltaTime);
@@ -166,15 +196,19 @@ public class Player extends Entity {
      */
     private void applyMovementInput() {
         velocityX = 0;
+        double speed = Config.PLAYER_SPEED;
+        if (isCrouching) {
+            speed *= Config.PLAYER_CROUCH_SPEED_MULTIPLIER;
+        }
 
         if (activeKeys.contains(KeyCode.A)) {
-            velocityX   = -Config.PLAYER_SPEED;
+            velocityX   = -speed;
             facingRight = false;
             facingDirection = Direction.LEFT;
         }
         if (activeKeys.contains(KeyCode.D)) {
             // D 鍵後蓋 A 鍵，右方向優先
-            velocityX   = Config.PLAYER_SPEED;
+            velocityX   = speed;
             facingRight = true;
             facingDirection = Direction.RIGHT;
         }
@@ -187,6 +221,10 @@ public class Player extends Entity {
      * @param deltaTime 時間差（秒）
      */
     private void updateAttack(double deltaTime) {
+        if (attackCooldownTimer > 0) {
+            attackCooldownTimer -= deltaTime;
+            if (attackCooldownTimer < 0) attackCooldownTimer = 0;
+        }
         if (!isAttacking) return;
 
         attackTimer -= deltaTime;
@@ -198,10 +236,7 @@ public class Player extends Entity {
             return;
         }
 
-        // 攻擊框緊貼玩家面向那側，垂直置中於玩家
-        double boxX = facingRight ? x + width : x - ATTACK_BOX_W;
-        double boxY = y + (height - ATTACK_BOX_H) / 2.0;
-        attackBox = new Rectangle2D(boxX, boxY, ATTACK_BOX_W, ATTACK_BOX_H);
+        updateAttackArcBounds();
     }
 
     /**
@@ -270,18 +305,28 @@ public class Player extends Entity {
         updateFacingDirectionFromKey(key);
 
         // 跳躍：W 或空白鍵，且必須站在地面
-        if ((key == KeyCode.W || key == KeyCode.SPACE) && isOnGround) {
+        if ((key == KeyCode.W || key == KeyCode.SPACE) && isOnGround && !isCrouching) {
             velocityY  = Config.JUMP_FORCE;
             isOnGround = false;
         }
 
+        // S：地面短按穿平台、長按蹲下；空中快速下落
+        if (key == KeyCode.S) {
+            if (isOnGround) {
+                sHoldTimer = 0;
+                sPendingCrouch = true;
+            } else if (velocityY < Config.PLAYER_FAST_FALL_SPEED) {
+                velocityY = Config.PLAYER_FAST_FALL_SPEED;
+            }
+        }
+
         // 攻擊：J 鍵，且目前不在攻擊狀態（避免動畫插入）
-        if (key == KeyCode.J && !isAttacking) {
+        if (key == KeyCode.J && !isAttacking && attackCooldownTimer <= 0) {
             startAttack();
         }
 
-        // 火球術：F 鍵，依目前面向水平發射；需消耗 Mana 並有冷卻
-        if (key == KeyCode.F) {
+        // 火球術：K 鍵，依目前面向水平發射；需消耗 Mana 並有冷卻
+        if (key == KeyCode.K) {
             castFireball();
         }
     }
@@ -292,7 +337,53 @@ public class Player extends Entity {
      * @param key 被放開的按鍵
      */
     public void handleKeyReleased(KeyCode key) {
+        if (key == KeyCode.S && sPendingCrouch) {
+            platformDropRequested = true;
+            sPendingCrouch = false;
+            sHoldTimer = 0;
+        }
         activeKeys.remove(key);
+    }
+
+    private void updateCrouchHold(double deltaTime) {
+        if (!sPendingCrouch) return;
+        if (!activeKeys.contains(KeyCode.S) || !isOnGround) {
+            sPendingCrouch = false;
+            sHoldTimer = 0;
+            return;
+        }
+        sHoldTimer += deltaTime;
+        if (sHoldTimer >= CROUCH_HOLD_THRESHOLD) {
+            startCrouch();
+            sPendingCrouch = false;
+            sHoldTimer = 0;
+        }
+    }
+
+    private void updateIceProjectiles(double deltaTime) {
+        iceProjectiles.removeIf(projectile -> !projectile.isAlive());
+        for (IceProjectile projectile : iceProjectiles) {
+            projectile.update(deltaTime);
+        }
+    }
+
+    /**
+     * 場景在確認頭頂空間足夠後呼叫，使玩家站起。
+     */
+    public void standUp() {
+        if (!isCrouching) return;
+        double oldHeight = height;
+        height = Config.PLAYER_HEIGHT;
+        y -= height - oldHeight;
+        isCrouching = false;
+    }
+
+    private void startCrouch() {
+        if (isCrouching) return;
+        double oldHeight = height;
+        height = Config.PLAYER_HEIGHT * Config.PLAYER_CROUCH_HEIGHT_MULTIPLIER;
+        y += oldHeight - height;
+        isCrouching = true;
     }
 
     /**
@@ -303,11 +394,18 @@ public class Player extends Entity {
         isAttacking  = true;
         attackLanded = false;   // 新的揮擊開始，重置命中旗標
         attackTimer  = ATTACK_DURATION;
+        attackCooldownTimer = ATTACK_COOLDOWN;
 
-        // 立即產生攻擊框（updateAttack 每幀也會同步位置）
-        double boxX = facingRight ? x + width : x - ATTACK_BOX_W;
-        double boxY = y + (height - ATTACK_BOX_H) / 2.0;
-        attackBox = new Rectangle2D(boxX, boxY, ATTACK_BOX_W, ATTACK_BOX_H);
+        updateAttackArcBounds();
+    }
+
+    private void updateAttackArcBounds() {
+        double centerX = facingRight ? x + width : x;
+        double centerY = y + height / 2.0;
+        double boxX = facingRight ? x + width / 2.0 : centerX - ATTACK_ARC_RADIUS;
+        double boxY = centerY - ATTACK_ARC_RADIUS;
+        attackBox = new Rectangle2D(boxX, boxY,
+            ATTACK_ARC_RADIUS + width / 2.0, ATTACK_ARC_RADIUS * 2);
     }
 
     /**
@@ -334,6 +432,14 @@ public class Player extends Entity {
     public void castEmpoweredFireball() {
         spawnFireball(26.0, 430.0, EMPOWERED_FIREBALL_DAMAGE,
                       Color.DARKORANGE, Color.WHITE);
+    }
+
+    public void castIceProjectile() {
+        double size = IceProjectile.SIZE;
+        double dirX = facingRight ? 1.0 : -1.0;
+        double spawnX = facingRight ? x + width : x - size;
+        double spawnY = y + (height - size) / 2.0;
+        iceProjectiles.add(new IceProjectile(spawnX, spawnY, dirX, 0));
     }
 
     /**
@@ -414,6 +520,9 @@ public class Player extends Entity {
         for (Fireball fireball : fireballs) {
             fireball.draw(gc);
         }
+        for (IceProjectile projectile : iceProjectiles) {
+            projectile.draw(gc);
+        }
 
         // 血量條永遠顯示
         drawHpBar(gc);
@@ -457,8 +566,12 @@ public class Player extends Entity {
         gc.save();
         gc.setGlobalAlpha(0.45);
         gc.setFill(Color.YELLOW);
-        gc.fillRect(attackBox.getMinX(), attackBox.getMinY(),
-                    attackBox.getWidth(), attackBox.getHeight());
+        double centerX = facingRight ? x + width : x;
+        double centerY = y + height / 2.0;
+        double arcX = centerX - ATTACK_ARC_RADIUS;
+        double arcY = centerY - ATTACK_ARC_RADIUS;
+        gc.fillArc(arcX, arcY, ATTACK_ARC_RADIUS * 2, ATTACK_ARC_RADIUS * 2,
+                   facingRight ? -90 : 90, 180, ArcType.ROUND);
         gc.restore();   // 恢復 alpha，避免影響後續繪製
     }
 
@@ -498,6 +611,25 @@ public class Player extends Entity {
     /** 回傳目前攻擊判定框；不在攻擊狀態時為 null */
     public Rectangle2D getAttackBox() { return attackBox; }
 
+    public boolean isAttackHitting(Rectangle2D target) {
+        if (attackBox == null || !attackBox.intersects(target)) return false;
+
+        double centerX = facingRight ? x + width : x;
+        double centerY = y + height / 2.0;
+        double targetX = target.getMinX() + target.getWidth() / 2.0;
+        double targetY = target.getMinY() + target.getHeight() / 2.0;
+        double dx = targetX - centerX;
+        double dy = targetY - centerY;
+        if (facingRight && dx < 0) return false;
+        if (!facingRight && dx > 0) return false;
+        if (Math.sqrt(dx * dx + dy * dy) <= ATTACK_ARC_RADIUS) return true;
+
+        double frontBodyX = facingRight ? x + width / 2.0 : x - ATTACK_FRONT_BODY_REACH;
+        Rectangle2D frontBody = new Rectangle2D(frontBodyX, y,
+            width / 2.0 + ATTACK_FRONT_BODY_REACH, height);
+        return frontBody.intersects(target);
+    }
+
     /**
      * 回傳本次揮擊是否可以命中目標。
      * 條件：正在攻擊中（isAttacking）且本次揮擊尚未命中過（!attackLanded）。
@@ -519,6 +651,8 @@ public class Player extends Entity {
     /** 回傳玩家目前所有火球，供場景進行碰撞判定 */
     public List<Fireball> getFireballs() { return fireballs; }
 
+    public List<IceProjectile> getIceProjectiles() { return iceProjectiles; }
+
     /** 回傳火球術是否可施放 */
     public boolean canCastFireball() {
         return fireballCooldownTimer <= 0 && mana >= Config.FIREBALL_MANA_COST;
@@ -526,6 +660,11 @@ public class Player extends Entity {
 
     /** 回傳火球術剩餘冷卻秒數 */
     public double getFireballCooldownTimer() { return fireballCooldownTimer; }
+
+    public double getFireballCooldownRatio() {
+        if (Config.FIREBALL_COOLDOWN <= 0) return 0;
+        return Math.max(0, Math.min(1, fireballCooldownTimer / Config.FIREBALL_COOLDOWN));
+    }
 
     public double getMana() { return mana; }
 
@@ -566,17 +705,25 @@ public class Player extends Entity {
         isOnGround = false;
         facingRight = true;
         facingDirection = Direction.RIGHT;
+        isCrouching = false;
+        width = Config.PLAYER_WIDTH;
+        height = Config.PLAYER_HEIGHT;
         isAttacking = false;
         attackLanded = false;
         attackBox = null;
         attackTimer = 0;
+        attackCooldownTimer = 0;
         fireballs.clear();
+        iceProjectiles.clear();
         fireballCooldownTimer = 0;
         lastFireballFailedForMana = false;
         invincibleTimer = 0;
         flickerTimer = 0;
         flickerVisible = true;
         activeKeys.clear();
+        sHoldTimer = 0;
+        sPendingCrouch = false;
+        platformDropRequested = false;
     }
 
     /**
@@ -590,6 +737,23 @@ public class Player extends Entity {
         if (onGround && velocityY > 0) {
             velocityY = 0;  // 落地時清除下落速度
         }
+    }
+
+    public boolean isCrouching() { return isCrouching; }
+
+    public boolean wantsToStandUp() {
+        return isCrouching && !activeKeys.contains(KeyCode.S);
+    }
+
+    public Rectangle2D getStandingHitbox() {
+        double standingHeight = Config.PLAYER_HEIGHT;
+        return new Rectangle2D(x, y + height - standingHeight, width, standingHeight);
+    }
+
+    public boolean consumePlatformDropRequest() {
+        boolean requested = platformDropRequested;
+        platformDropRequested = false;
+        return requested;
     }
 
     /**

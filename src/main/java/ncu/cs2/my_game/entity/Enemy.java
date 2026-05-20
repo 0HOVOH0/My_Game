@@ -1,7 +1,9 @@
 package ncu.cs2.my_game.entity;
 
+import javafx.geometry.Rectangle2D;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
+import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.physics.Gravity;
 
 /**
@@ -31,24 +33,30 @@ public class Enemy extends Entity {
     /** 巡邏移動速度（像素 / 秒） */
     private static final double PATROL_SPEED = 80.0;
 
+    private static final double DETECT_RANGE = 245.0;
+    private static final double CHASE_RANGE = 330.0;
+    private static final double MEMORY_DURATION = 1.25;
+    private static final double DROP_CHASE_MARGIN = 34.0;
+    private static final double CHASE_JUMP_COOLDOWN = 1.25;
+
     // ── 巡邏邊界 ─────────────────────────────────────────────────────────────
 
     /**
      * 巡邏左邊界 X 座標（通常設為所在平台左端）。
      * 敵人 X 小於此值時轉為向右走。
      */
-    private final double patrolLeft;
+    protected final double patrolLeft;
 
     /**
      * 巡邏右邊界 X 座標（通常設為平台右端減去敵人寬度）。
      * 敵人 X 大於此值時轉為向左走。
      */
-    private final double patrolRight;
+    protected final double patrolRight;
 
     // ── 狀態 ─────────────────────────────────────────────────────────────────
 
     /** 移動方向：+1.0 = 向右，-1.0 = 向左 */
-    private double moveDir;
+    protected double moveDir;
 
     /**
      * 接觸傷害冷卻計時器（秒）。
@@ -61,6 +69,14 @@ public class Enemy extends Entity {
 
     /** 目前速度倍率，1.0 表示正常速度 */
     private double speedMultiplier;
+    private final double baseSpeedMultiplier;
+    private final int contactDamage;
+    private Player targetPlayer;
+    private double memoryTimer;
+    private boolean hasLineOfSight;
+    private boolean onGround;
+    private double chaseJumpCooldown;
+    private Rectangle2D[] navigationSurfaces = new Rectangle2D[0];
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -73,13 +89,26 @@ public class Enemy extends Entity {
      * @param patrolRight 巡邏右邊界 X（對應平台右端 - ENEMY_W）
      */
     public Enemy(double x, double y, double patrolLeft, double patrolRight) {
+        this(x, y, patrolLeft, patrolRight, 1.0, 1.0, 1.0);
+    }
+
+    public Enemy(double x, double y, double patrolLeft, double patrolRight,
+                 double hpMultiplier, double damageMultiplier, double speedMultiplier) {
         super(x, y, ENEMY_W, ENEMY_H, ENEMY_MAX_HP);
+        setMaxHp((int) Math.round(ENEMY_MAX_HP * hpMultiplier));
+        setHp(getMaxHp());
         this.patrolLeft  = patrolLeft;
         this.patrolRight = patrolRight;
         this.moveDir     = 1.0;   // 初始向右
         this.damageCooldown = 0;
         this.slowTimer = 0;
-        this.speedMultiplier = 1.0;
+        this.baseSpeedMultiplier = speedMultiplier;
+        this.speedMultiplier = speedMultiplier;
+        this.contactDamage = Math.max(1, (int) Math.round(CONTACT_DAMAGE * damageMultiplier));
+        this.memoryTimer = 0;
+        this.hasLineOfSight = false;
+        this.onGround = false;
+        this.chaseJumpCooldown = 0;
     }
 
     // ── update ────────────────────────────────────────────────────────────────
@@ -99,28 +128,43 @@ public class Enemy extends Entity {
         Gravity.apply(this, deltaTime);
 
         // 2. 設定水平速度並更新位置
+        boolean chasing = targetPlayer != null && memoryTimer > 0;
+        if (chasing) {
+            double playerCenter = targetPlayer.getX() + targetPlayer.getWidth() / 2.0;
+            double enemyCenter = x + width / 2.0;
+            if (Math.abs(playerCenter - enemyCenter) > 8.0) {
+                moveDir = playerCenter > enemyCenter ? 1.0 : -1.0;
+            }
+            tryJumpChase(playerCenter, enemyCenter);
+        }
+        if (chaseJumpCooldown > 0) {
+            chaseJumpCooldown -= deltaTime;
+            if (chaseJumpCooldown < 0) chaseJumpCooldown = 0;
+        }
         velocityX = moveDir * PATROL_SPEED * speedMultiplier;
         x += velocityX * deltaTime;
         y += velocityY * deltaTime;
 
         // 3. 到達巡邏邊界時原地修正並反向
-        if (x <= patrolLeft) {
-            x       = patrolLeft;
+        if (!chasing && x <= patrolLeft) {
             moveDir = 1.0;   // 轉向右
-        } else if (x + width >= patrolRight) {
-            x       = patrolRight - width;
+        } else if (!chasing && x + width >= patrolRight) {
             moveDir = -1.0;  // 轉向左
         }
 
         // 4. 傷害冷卻計時器遞減
         if (damageCooldown > 0) damageCooldown -= deltaTime;
+        if (memoryTimer > 0) {
+            memoryTimer -= deltaTime;
+            if (memoryTimer < 0) memoryTimer = 0;
+        }
 
         // 5. 緩速計時器遞減
         if (slowTimer > 0) {
             slowTimer -= deltaTime;
             if (slowTimer <= 0) {
                 slowTimer = 0;
-                speedMultiplier = 1.0;
+                speedMultiplier = baseSpeedMultiplier;
             }
         }
     }
@@ -144,7 +188,101 @@ public class Enemy extends Entity {
      */
     public void applySlow(double duration, double multiplier) {
         slowTimer = Math.max(slowTimer, duration);
-        speedMultiplier = Math.min(speedMultiplier, multiplier);
+        speedMultiplier = Math.min(speedMultiplier, baseSpeedMultiplier * multiplier);
+    }
+
+    public void updateAwareness(Player player, Rectangle2D[] blockers) {
+        targetPlayer = player;
+        double dx = (player.getX() + player.getWidth() / 2.0) - (x + width / 2.0);
+        double dy = (player.getY() + player.getHeight() / 2.0) - (y + height / 2.0);
+        double distance = Math.sqrt(dx * dx + dy * dy);
+        boolean inDetectionRadius = distance <= getDetectRange();
+        hasLineOfSight = inDetectionRadius && !isLineBlocked(player, blockers);
+        if (hasLineOfSight) {
+            memoryTimer = MEMORY_DURATION;
+        } else if (inDetectionRadius && Math.abs(dy) < 190.0) {
+            memoryTimer = Math.max(memoryTimer, MEMORY_DURATION * 0.65);
+        } else if (distance > getChaseRange()) {
+            memoryTimer = 0;
+        }
+    }
+
+    public boolean hasLineOfSightToPlayer() {
+        return hasLineOfSight;
+    }
+
+    protected boolean isChasingPlayer() {
+        return memoryTimer > 0;
+    }
+
+    protected double getDetectRange() { return DETECT_RANGE; }
+
+    protected double getChaseRange() { return CHASE_RANGE; }
+
+    public void setNavigationSurfaces(Rectangle2D[] surfaces) {
+        navigationSurfaces = surfaces == null ? new Rectangle2D[0] : surfaces;
+    }
+
+    public boolean shouldDropFromPlatform() {
+        if (!onGround || !isChasingPlayer() || targetPlayer == null) return false;
+        boolean playerBelow = targetPlayer.getY() > y + height + 28.0;
+        if (!playerBelow) return false;
+
+        double playerCenter = targetPlayer.getX() + targetPlayer.getWidth() / 2.0;
+        double enemyCenter = x + width / 2.0;
+        if (playerCenter > enemyCenter) {
+            return x + width >= patrolRight - DROP_CHASE_MARGIN;
+        }
+        return x <= patrolLeft + DROP_CHASE_MARGIN;
+    }
+
+    private void tryJumpChase(double playerCenter, double enemyCenter) {
+        if (!onGround || chaseJumpCooldown > 0 || targetPlayer == null) return;
+
+        boolean playerHigher = targetPlayer.getY() + targetPlayer.getHeight()
+            < y + height - 24.0;
+        boolean closeEnough = Math.abs(playerCenter - enemyCenter) < 190.0;
+        boolean reachableHeight = y - targetPlayer.getY() < 135.0;
+        if (!playerHigher || !closeEnough || !reachableHeight || !hasLineOfSight) return;
+        if (!hasReachableLandingSurface(playerCenter)) return;
+
+        velocityY = Config.JUMP_FORCE * 0.72;
+        onGround = false;
+        chaseJumpCooldown = CHASE_JUMP_COOLDOWN;
+    }
+
+    private boolean hasReachableLandingSurface(double playerCenter) {
+        double playerFeet = targetPlayer.getY() + targetPlayer.getHeight();
+        for (Rectangle2D surface : navigationSurfaces) {
+            if (surface.getWidth() < ENEMY_W + 12) continue;
+            boolean nearPlayerX = playerCenter >= surface.getMinX() - 18.0
+                && playerCenter <= surface.getMaxX() + 18.0;
+            boolean nearPlayerY = Math.abs(surface.getMinY() - playerFeet) <= 18.0;
+            boolean jumpableHeight = y + height - surface.getMinY() <= 135.0;
+            boolean jumpableDistance = Math.abs((surface.getMinX() + surface.getWidth() / 2.0)
+                - (x + width / 2.0)) <= 210.0;
+            if (nearPlayerX && nearPlayerY && jumpableHeight && jumpableDistance) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isLineBlocked(Player player, Rectangle2D[] blockers) {
+        if (blockers == null) return false;
+        double x1 = x + width / 2.0;
+        double y1 = y + height / 2.0;
+        double x2 = player.getX() + player.getWidth() / 2.0;
+        double y2 = player.getY() + player.getHeight() / 2.0;
+        for (Rectangle2D blocker : blockers) {
+            for (int i = 1; i < 10; i++) {
+                double t = i / 10.0;
+                double px = x1 + (x2 - x1) * t;
+                double py = y1 + (y2 - y1) * t;
+                if (blocker.contains(px, py)) return true;
+            }
+        }
+        return false;
     }
 
     // ── 接觸傷害 ─────────────────────────────────────────────────────────────
@@ -160,7 +298,7 @@ public class Enemy extends Entity {
     public boolean tryDamagePlayer(Player player) {
         if (damageCooldown > 0) return false;
 
-        player.takeDamage(CONTACT_DAMAGE);
+        player.takeDamage(contactDamage);
         damageCooldown = DAMAGE_COOLDOWN;   // 重置冷卻
         return true;
     }
@@ -173,6 +311,7 @@ public class Enemy extends Entity {
      * @param onGround true = 已踩到平台；false = 在空中（不做任何事）
      */
     public void setOnGround(boolean onGround) {
+        this.onGround = onGround;
         if (onGround && velocityY > 0) velocityY = 0;
     }
 

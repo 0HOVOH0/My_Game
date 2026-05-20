@@ -1,23 +1,23 @@
 package ncu.cs2.my_game.state;
 
 import ncu.cs2.my_game.item.Inventory;
-import ncu.cs2.my_game.item.PickupType;
+import ncu.cs2.my_game.item.InventorySlot;
 
-import java.util.EnumMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 背包數量快照。
  */
 public class InventorySnapshot {
 
-    private final Map<PickupType, Integer> counts;
+    private final List<InventorySlot> slots;
 
     public InventorySnapshot(Inventory inventory) {
-        this.counts = new EnumMap<>(inventory.snapshotCounts());
+        this.slots = new ArrayList<>(inventory.snapshotSlots());
     }
 
     public void restore(Inventory inventory) {
-        inventory.restoreCounts(counts);
+        inventory.restoreSlots(slots);
     }
 }

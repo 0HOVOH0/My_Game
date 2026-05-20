@@ -1,6 +1,7 @@
 package ncu.cs2.my_game.fsm;
 
 import ncu.cs2.my_game.entity.Entity;
+import ncu.cs2.my_game.entity.Boss;
 
 /**
  * Boss 專用狀態機，繼承 StateMachine&lt;BossState&gt;。
@@ -168,7 +169,8 @@ public class BossStateMachine extends StateMachine<BossState> {
         }
 
         // DASH：血量低於 60%、距離夠近，且冷卻結束才能衝刺
-        if (distance < DASH_TRIGGER_RANGE && getHpRatio() < DASH_HP_THRESHOLD && dashCooldown <= 0) {
+        if (distance < DASH_TRIGGER_RANGE && getHpRatio() < DASH_HP_THRESHOLD && dashCooldown <= 0
+            && canStartDash()) {
             transitionTo(BossState.DASH);
             return;
         }
@@ -280,6 +282,11 @@ public class BossStateMachine extends StateMachine<BossState> {
 
         onFireProjectile.run();
         spellCooldown = randomSpellCooldown(distance);
+    }
+
+    private boolean canStartDash() {
+        if (!(boss instanceof Boss smartBoss)) return true;
+        return smartBoss.canStartDashToward(player, DASH_SPEED, DASH_DURATION);
     }
 
     /**

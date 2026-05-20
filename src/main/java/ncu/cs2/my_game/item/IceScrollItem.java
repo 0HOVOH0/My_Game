@@ -4,16 +4,17 @@ import javafx.scene.paint.Color;
 
 public class IceScrollItem extends PickupItem {
 
-    private static final double DURATION = 5.0;
-    private static final double SPEED_MULTIPLIER = 0.45;
-
     public IceScrollItem(double x, double y) {
-        super(x, y, PickupType.ICE_SCROLL);
+        this(x, y, 1);
+    }
+
+    public IceScrollItem(double x, double y, int quantity) {
+        super(x, y, PickupType.ICE_SCROLL, quantity);
     }
 
     @Override
     public void use(UseContext context) {
-        context.slowEnemies(DURATION, SPEED_MULTIPLIER);
+        context.shootIceProjectile();
     }
 
     @Override

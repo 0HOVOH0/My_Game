@@ -7,7 +7,11 @@ public class SmallPotionItem extends PickupItem {
     private static final int HEAL_AMOUNT = 20;
 
     public SmallPotionItem(double x, double y) {
-        super(x, y, PickupType.SMALL_POTION);
+        this(x, y, 1);
+    }
+
+    public SmallPotionItem(double x, double y, int quantity) {
+        super(x, y, PickupType.SMALL_POTION, quantity);
     }
 
     @Override
