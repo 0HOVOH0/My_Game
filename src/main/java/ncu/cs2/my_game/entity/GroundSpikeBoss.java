@@ -62,6 +62,11 @@ public class GroundSpikeBoss extends Boss {
     @Override
     public List<GroundSpike> getGroundSpikes() { return spikes; }
 
+    @Override
+    protected void clearOwnedEntities() {
+        spikes.clear();
+    }
+
     private void castSpikePattern() {
         double playerCenter = player.getX() + player.getWidth() / 2.0;
         Rectangle2D surface = findSurfaceNearPlayer(playerCenter);

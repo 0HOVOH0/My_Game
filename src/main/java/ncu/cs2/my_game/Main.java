@@ -1,6 +1,7 @@
 package ncu.cs2.my_game;
 
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
@@ -251,6 +252,14 @@ public class Main extends Application {
         stageNumber++;
         normalStagesInCycle = 0;
         nextStageDefinition = stageGenerator.nextStage();
+    }
+
+    public static void exitToMainMenu() {
+        switchScene("main-menu.fxml");
+    }
+
+    public static void quitGame() {
+        Platform.exit();
     }
 
     public static BossType rollBossType() {

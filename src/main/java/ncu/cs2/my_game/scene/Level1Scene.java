@@ -5,18 +5,22 @@ import javafx.geometry.Rectangle2D;
 import javafx.scene.Scene;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
-import javafx.scene.input.KeyCode;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.stage.Stage;
 import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.Main;
+import ncu.cs2.my_game.effect.EffectManager;
 import ncu.cs2.my_game.entity.Fireball;
 import ncu.cs2.my_game.entity.Player;
 import ncu.cs2.my_game.map.DungeonMapRenderer;
+import ncu.cs2.my_game.map.PlatformValidationResult;
 import ncu.cs2.my_game.map.PlatformDungeonGenerator;
 import ncu.cs2.my_game.map.TileMap;
 import ncu.cs2.my_game.physics.Collision;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * First stage: procedural underground platform dungeon.
@@ -29,12 +33,14 @@ public class Level1Scene extends AnimationTimer {
     private final TileMap tileMap;
     private final Rectangle2D goalDoor;
     private final Player player;
+    private final EffectManager effectManager;
+    private final GameFlowController flowController;
 
     private long lastNano = 0;
     private boolean transitioning = false;
-    private boolean rKeyPressed = false;
     private double cameraX = 0;
     private double playerPlatformDropTimer = 0;
+    private double fps = 0;
 
     public Level1Scene(Stage stage) {
         this.stage = stage;
@@ -48,11 +54,14 @@ public class Level1Scene extends AnimationTimer {
         Fireball.setWorldBounds(tileMap.getWorldWidth(), Config.WINDOW_HEIGHT);
 
         player = new Player(tileMap.getSpawnX(), tileMap.getSpawnY());
+        effectManager = new EffectManager();
+        flowController = GameFlowController.forScene(this::cleanup, () -> Main.startLevel1());
 
         javafxScene.setOnKeyPressed(e -> {
+            if (flowController.handleKeyPressed(e)) return;
             player.handleKeyPressed(e.getCode());
-            if (e.getCode() == KeyCode.R && !player.isAlive()) {
-                rKeyPressed = true;
+            if (player.consumeAttackStarted()) {
+                effectManager.playSlash(player);
             }
         });
         javafxScene.setOnKeyReleased(e -> player.handleKeyReleased(e.getCode()));
@@ -71,18 +80,28 @@ public class Level1Scene extends AnimationTimer {
         double dt = (now - lastNano) / 1_000_000_000.0;
         lastNano = now;
         if (dt > Config.MAX_DELTA_TIME) dt = Config.MAX_DELTA_TIME;
+        fps = dt > 0 ? 1.0 / dt : 0;
 
-        update(dt);
+        if (!flowController.isPaused()) {
+            update(dt);
+        }
         render(gc);
     }
 
     private void update(double dt) {
         if (!player.isAlive()) {
-            if (rKeyPressed && !transitioning) {
-                rKeyPressed = false;
+            return;
+        }
+
+        if (player.consumeAttackStarted()) {
+            effectManager.playSlash(player);
+        }
+
+        effectManager.update(dt);
+
+        if (!player.isAlive()) {
+            if (!transitioning) {
                 transitioning = true;
-                this.stop();
-                Main.startLevel1();
             }
             return;
         }
@@ -195,18 +214,24 @@ public class Level1Scene extends AnimationTimer {
 
     private void render(GraphicsContext gc) {
         DungeonMapRenderer.draw(gc, tileMap, cameraX, "GOAL");
+        if (flowController.isDebugVisible()) {
+            DungeonMapRenderer.drawDebug(gc, tileMap, cameraX);
+        }
 
         gc.save();
         gc.translate(-cameraX, 0);
         player.draw(gc);
+        effectManager.draw(gc);
         gc.restore();
 
         HudRenderer.drawPlayerStatus(gc, player, "LEVEL 1");
         drawProgress(gc);
+        flowController.drawDebugOverlay(gc, debugLines());
 
         if (!player.isAlive()) {
             drawGameOverOverlay(gc);
         }
+        flowController.drawPauseOverlay(gc);
     }
 
     private void drawProgress(GraphicsContext gc) {
@@ -235,5 +260,33 @@ public class Level1Scene extends AnimationTimer {
     private Rectangle2D inflate(Rectangle2D rect, double amount) {
         return new Rectangle2D(rect.getMinX() - amount, rect.getMinY() - amount,
             rect.getWidth() + amount * 2, rect.getHeight() + amount * 2);
+    }
+
+    private List<String> debugLines() {
+        List<String> lines = new ArrayList<>();
+        PlatformValidationResult result = tileMap.getValidationResult();
+        lines.add(String.format("FPS: %.0f", fps));
+        lines.add(String.format("Player: %.1f, %.1f", player.getX(), player.getY()));
+        lines.add(String.format("Velocity: %.1f, %.1f", player.getVelocityX(), player.getVelocityY()));
+        lines.add("Stage: LEVEL 1");
+        lines.add("Enemy count: 0");
+        lines.add("Boss alive: false");
+        lines.add("Projectiles: " + player.getFireballs().size());
+        lines.add("Effects: " + effectManager.getActiveEffectCount());
+        lines.add("Paused: " + flowController.isPaused());
+        if (result != null) {
+            lines.add("Map seed: " + result.seed());
+            lines.add("Map valid: " + result.valid() + " (" + result.reason() + ")");
+            lines.add("Platforms: " + result.reachablePlatformCount() + "/" + result.platformCount());
+            lines.add("Unreachable: " + result.unreachablePlatformCount());
+        }
+        return lines;
+    }
+
+    private void cleanup() {
+        this.stop();
+        effectManager.clear();
+        player.getFireballs().clear();
+        player.getIceProjectiles().clear();
     }
 }

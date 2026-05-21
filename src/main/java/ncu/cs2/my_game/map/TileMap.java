@@ -22,6 +22,7 @@ public class TileMap {
     private double spawnX;
     private double spawnY;
     private Rectangle2D exitBounds;
+    private PlatformValidationResult validationResult;
 
     public TileMap(int widthTiles, int heightTiles) {
         this.widthTiles = widthTiles;
@@ -140,5 +141,11 @@ public class TileMap {
 
     public void setExitBounds(Rectangle2D exitBounds) {
         this.exitBounds = exitBounds;
+    }
+
+    public PlatformValidationResult getValidationResult() { return validationResult; }
+
+    public void setValidationResult(PlatformValidationResult validationResult) {
+        this.validationResult = validationResult;
     }
 }

@@ -14,6 +14,7 @@ import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.Main;
 import ncu.cs2.my_game.economy.GoldPickup;
 import ncu.cs2.my_game.economy.GoldSpawnManager;
+import ncu.cs2.my_game.effect.EffectManager;
 import ncu.cs2.my_game.entity.BombEntity;
 import ncu.cs2.my_game.entity.Enemy;
 import ncu.cs2.my_game.entity.Fireball;
@@ -28,6 +29,7 @@ import ncu.cs2.my_game.item.PickupType;
 import ncu.cs2.my_game.item.UseContext;
 import ncu.cs2.my_game.map.DungeonMapRenderer;
 import ncu.cs2.my_game.map.PlatformDungeonGenerator;
+import ncu.cs2.my_game.map.PlatformValidationResult;
 import ncu.cs2.my_game.map.TileMap;
 import ncu.cs2.my_game.map.TileType;
 import ncu.cs2.my_game.physics.Collision;
@@ -103,6 +105,8 @@ public class Level2Scene extends AnimationTimer {
 
     /** 玩家實體 */
     private final Player player;
+    private final EffectManager effectManager;
+    private final GameFlowController flowController;
 
     /** 本關地下城 tile map，負責地形資料與視覺呈現。 */
     private final TileMap tileMap;
@@ -185,6 +189,7 @@ public class Level2Scene extends AnimationTimer {
     private double cameraX = 0;
 
     private double playerPlatformDropTimer = 0;
+    private double fps = 0;
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -210,6 +215,8 @@ public class Level2Scene extends AnimationTimer {
         player = new Player(tileMap.getSpawnX(), tileMap.getSpawnY());
         player.setHp(Main.getPersistedHp());
         player.setMana(Main.getPersistedMana());
+        effectManager = new EffectManager();
+        flowController = GameFlowController.forScene(this::cleanup, () -> Main.startLevel2());
 
         // ── 地板 ──────────────────────────────────────────────────────────────
         ground = new Rectangle2D(0, GROUND_Y, WORLD_WIDTH, Config.GROUND_THICKNESS);
@@ -260,7 +267,11 @@ public class Level2Scene extends AnimationTimer {
 
         // ── 綁定鍵盤事件 ──────────────────────────────────────────────────────
         javafxScene.setOnKeyPressed(e -> {
+            if (flowController.handleKeyPressed(e)) return;
             player.handleKeyPressed(e.getCode());
+            if (player.consumeAttackStarted()) {
+                effectManager.playSlash(player);
+            }
             handleInventoryKey(e.getCode());
             if (e.getCode() == KeyCode.B) {
                 inventoryOpen = !inventoryOpen;
@@ -296,8 +307,11 @@ public class Level2Scene extends AnimationTimer {
         double dt = (now - lastNano) / 1_000_000_000.0;
         lastNano = now;
         if (dt > Config.MAX_DELTA_TIME) dt = Config.MAX_DELTA_TIME;
+        fps = dt > 0 ? 1.0 / dt : 0;
 
-        update(dt);
+        if (!flowController.isPaused()) {
+            update(dt);
+        }
         render(gc);
     }
 
@@ -330,6 +344,10 @@ public class Level2Scene extends AnimationTimer {
         }
 
         // 1. 玩家物理更新
+        if (player.consumeAttackStarted()) {
+            effectManager.playSlash(player);
+        }
+        effectManager.update(dt);
         player.update(dt);
         updatePlayerPlatformDrop(dt);
 
@@ -1183,6 +1201,9 @@ public class Level2Scene extends AnimationTimer {
      */
     private void render(GraphicsContext gc) {
         DungeonMapRenderer.draw(gc, tileMap, cameraX, "BOSS");
+        if (flowController.isDebugVisible()) {
+            DungeonMapRenderer.drawDebug(gc, tileMap, cameraX);
+        }
 
         gc.save();
         gc.translate(-cameraX, 0);
@@ -1213,15 +1234,18 @@ public class Level2Scene extends AnimationTimer {
 
         // 8. 玩家（最後繪製，顯示在最上層）
         player.draw(gc);
+        effectManager.draw(gc);
         gc.restore();
 
         // 9. HUD：左上角血量條
         drawHUD(gc);
+        flowController.drawDebugOverlay(gc, debugLines());
 
         // 10. 玩家死亡後疊加 GAME OVER 畫面
         if (!player.isAlive()) {
             drawGameOverOverlay(gc);
         }
+        flowController.drawPauseOverlay(gc);
     }
 
     /**
@@ -1352,6 +1376,57 @@ public class Level2Scene extends AnimationTimer {
         }
         if (inventoryOpen) {
             HudRenderer.drawInventoryOverlay(gc, inventory, selectedInventorySlot);
+        }
+    }
+
+    private List<String> debugLines() {
+        List<String> lines = new ArrayList<>();
+        PlatformValidationResult result = tileMap.getValidationResult();
+        int aliveEnemies = 0;
+        for (Enemy enemy : enemies) {
+            if (enemy.isAlive()) aliveEnemies++;
+        }
+
+        lines.add(String.format("FPS: %.0f", fps));
+        lines.add(String.format("Player: %.1f, %.1f", player.getX(), player.getY()));
+        lines.add(String.format("Velocity: %.1f, %.1f", player.getVelocityX(), player.getVelocityY()));
+        lines.add("Stage: " + stageDefinition.getHudTitle());
+        lines.add("Enemy count: " + aliveEnemies + "/" + enemies.length);
+        lines.add("Boss alive: false");
+        lines.add("Projectiles: " + countProjectiles());
+        lines.add("Effects: " + effectManager.getActiveEffectCount());
+        lines.add("Paused: " + flowController.isPaused());
+        if (result != null) {
+            lines.add("Map seed: " + result.seed());
+            lines.add("Map valid: " + result.valid() + " (" + result.reason() + ")");
+            lines.add("Platforms: " + result.reachablePlatformCount() + "/" + result.platformCount());
+            lines.add("Unreachable: " + result.unreachablePlatformCount());
+        }
+        return lines;
+    }
+
+    private int countProjectiles() {
+        int count = player.getFireballs().size() + player.getIceProjectiles().size() + bombs.size();
+        for (Enemy enemy : enemies) {
+            if (enemy instanceof RangedEnemy ranged) {
+                count += ranged.getProjectiles().size();
+            }
+        }
+        return count;
+    }
+
+    private void cleanup() {
+        this.stop();
+        effectManager.clear();
+        player.getFireballs().clear();
+        player.getIceProjectiles().clear();
+        bombs.clear();
+        pickupItems.clear();
+        goldPickups.clear();
+        for (Enemy enemy : enemies) {
+            if (enemy instanceof RangedEnemy ranged) {
+                ranged.clearProjectiles();
+            }
         }
     }
 }

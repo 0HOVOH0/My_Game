@@ -79,6 +79,9 @@ public class Player extends Entity {
     /** 目前是否正在攻擊（攻擊判定框存在中） */
     private boolean isAttacking;
 
+    /** One-frame event consumed by scenes to spawn visual slash effects. */
+    private boolean attackStarted;
+
     /**
      * 本次揮擊是否已命中過目標。
      * startAttack() 時重置為 false；場景呼叫 markHit() 後設為 true。
@@ -151,6 +154,7 @@ public class Player extends Entity {
         isCrouching    = false;
         isOnGround     = false;
         isAttacking    = false;
+        attackStarted   = false;
         attackLanded   = false;
         attackTimer    = 0;
         attackCooldownTimer = 0;
@@ -406,6 +410,7 @@ public class Player extends Entity {
      */
     private void startAttack() {
         isAttacking  = true;
+        attackStarted = true;
         attackFacingRight = facingRight;
         attackLanded = false;   // 新的揮擊開始，重置命中旗標
         attackTimer  = ATTACK_DURATION;
@@ -679,6 +684,12 @@ public class Player extends Entity {
      */
     public boolean canHit() { return isAttackDamageActive() && !attackLanded; }
 
+    public boolean consumeAttackStarted() {
+        boolean result = attackStarted;
+        attackStarted = false;
+        return result;
+    }
+
     public boolean isAttackDamageActive() {
         if (!isAttacking) return false;
         double elapsed = ATTACK_DURATION - attackTimer;
@@ -756,6 +767,7 @@ public class Player extends Entity {
         width = Config.PLAYER_WIDTH;
         height = Config.PLAYER_HEIGHT;
         isAttacking = false;
+        attackStarted = false;
         attackLanded = false;
         attackBox = null;
         attackTimer = 0;

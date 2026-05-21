@@ -120,4 +120,30 @@ public final class DungeonMapRenderer {
         gc.setFill(Color.web("#bff9ff"));
         gc.fillText(exitLabel, x - 3, y - 7);
     }
+
+    public static void drawDebug(GraphicsContext gc, TileMap map, double cameraX) {
+        PlatformValidationResult result = map.getValidationResult();
+        if (result == null) return;
+
+        gc.save();
+        gc.setLineWidth(2);
+        gc.setStroke(Color.web("#36d66b"));
+        for (Rectangle2D platform : map.getMainPlatforms()) {
+            gc.strokeRect(platform.getMinX() - cameraX, platform.getMinY(),
+                platform.getWidth(), platform.getHeight());
+        }
+
+        gc.setStroke(Color.web("#ff334e"));
+        for (Rectangle2D platform : result.unreachablePlatforms()) {
+            gc.strokeRect(platform.getMinX() - cameraX, platform.getMinY() - 3,
+                platform.getWidth(), platform.getHeight() + 6);
+        }
+
+        gc.setStroke(Color.web("#ffd84d"));
+        for (Rectangle2D reward : map.getRewardZones()) {
+            gc.strokeRect(reward.getMinX() - cameraX - 6, reward.getMinY() - 6,
+                reward.getWidth() + 12, reward.getHeight() + 12);
+        }
+        gc.restore();
+    }
 }

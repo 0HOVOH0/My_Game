@@ -65,6 +65,11 @@ public class SummonerBoss extends Boss {
     @Override
     public List<Enemy> getMinions() { return minions; }
 
+    @Override
+    protected void clearOwnedEntities() {
+        minions.clear();
+    }
+
     private void summonMinions() {
         Rectangle2D surface = chooseSummonSurface();
         double top = surface == null ? groundY : surface.getMinY();

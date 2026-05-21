@@ -19,32 +19,49 @@ public class PlatformDungeonGenerator {
     private static final int MAX_ATTEMPTS = 40;
 
     private final Random random;
+    private final long seed;
 
     public PlatformDungeonGenerator() {
-        this(new Random());
+        this(System.nanoTime());
+    }
+
+    public PlatformDungeonGenerator(long seed) {
+        this(new Random(seed), seed);
     }
 
     public PlatformDungeonGenerator(Random random) {
+        this(random, 0L);
+    }
+
+    private PlatformDungeonGenerator(Random random, long seed) {
         this.random = random;
+        this.seed = seed;
     }
 
     public TileMap generateLevel(int levelIndex) {
         int widthTiles = levelIndex == 1 ? 84 : 96;
         PlayerStats stats = PlayerStats.fromConfig();
+        PlatformGenerationConfig config = PlatformGenerationConfig.forLevel(levelIndex, stats);
 
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-            TileMap map = buildCandidate(widthTiles, levelIndex);
-            if (isReachableFromSpawnToExit(map, stats)) {
+            TileMap map = buildCandidate(widthTiles, levelIndex, config);
+            PlatformValidationResult result = validatePlatformMap(map, stats);
+            map.setValidationResult(result);
+            if (result.valid()) {
+                printGenerationReport(levelIndex, result);
                 return map;
             }
         }
 
-        TileMap fallback = buildCandidate(widthTiles, levelIndex);
+        TileMap fallback = buildCandidate(widthTiles, levelIndex, config);
         carveGuaranteedBridge(fallback);
+        PlatformValidationResult result = validatePlatformMap(fallback, stats);
+        fallback.setValidationResult(result);
+        printGenerationReport(levelIndex, result);
         return fallback;
     }
 
-    private TileMap buildCandidate(int widthTiles, int levelIndex) {
+    private TileMap buildCandidate(int widthTiles, int levelIndex, PlatformGenerationConfig config) {
         TileMap map = new TileMap(widthTiles, HEIGHT_TILES);
         buildShell(map);
 
@@ -55,9 +72,11 @@ public class PlatformDungeonGenerator {
         route.add(addRun(map, x, y, length, TileType.FLOOR));
 
         while (x < widthTiles - 13) {
-            int gap = 3 + random.nextInt(3);
-            int nextLength = 4 + random.nextInt(levelIndex == 1 ? 4 : 5);
-            int dy = random.nextInt(5) - 2;
+            int gap = config.minGapX() + random.nextInt(config.maxGapX() - config.minGapX() + 1);
+            int nextLength = config.minPlatformWidth()
+                + random.nextInt(config.maxPlatformWidth() - config.minPlatformWidth() + 1);
+            int dy = config.minHeightDelta()
+                + random.nextInt(config.maxHeightDelta() - config.minHeightDelta() + 1);
             if (random.nextDouble() < 0.25) dy += random.nextBoolean() ? 1 : -1;
 
             int nextY = clamp(y + dy, 5, 16);
@@ -70,7 +89,8 @@ public class PlatformDungeonGenerator {
             }
             if (nextLength < 4) break;
 
-            TileType type = random.nextDouble() < 0.35 ? TileType.ONE_WAY_PLATFORM : TileType.PLATFORM;
+            TileType type = random.nextDouble() < config.oneWayPlatformChance()
+                ? TileType.ONE_WAY_PLATFORM : TileType.PLATFORM;
             Rectangle2D platform = addRun(map, x, nextY, nextLength, type);
             route.add(platform);
             maybeAddVerticalSupport(map, x, nextY);
@@ -90,7 +110,7 @@ public class PlatformDungeonGenerator {
         map.setExitBounds(new Rectangle2D(exitX, exitY, TileMap.TILE_SIZE * 1.2, TileMap.TILE_SIZE * 2.2));
         map.setTile((int) (exitX / TileMap.TILE_SIZE), (int) (exitY / TileMap.TILE_SIZE), TileType.EXIT);
 
-        addBranches(map, route, levelIndex);
+        addBranches(map, route, levelIndex, config);
         addTrapsAndDecorations(map, route, levelIndex);
         addEnemyAndRewardZones(map, route, levelIndex);
         return map;
@@ -167,20 +187,24 @@ public class PlatformDungeonGenerator {
         }
     }
 
-    private void addBranches(TileMap map, List<Rectangle2D> route, int levelIndex) {
+    private void addBranches(TileMap map, List<Rectangle2D> route, int levelIndex,
+                             PlatformGenerationConfig config) {
         int branchCount = levelIndex == 1 ? 5 : 7;
         for (int i = 0; i < branchCount; i++) {
+            if (random.nextDouble() > config.branchChance()) continue;
             Rectangle2D base = route.get(1 + random.nextInt(Math.max(1, route.size() - 2)));
             int direction = random.nextBoolean() ? 1 : -1;
-            int length = 3 + random.nextInt(4);
-            int gap = 2 + random.nextInt(3);
+            int length = config.minPlatformWidth()
+                + random.nextInt(Math.max(1, config.branchPlatformCount()));
+            int gap = Math.max(2, config.minGapX() - 1) + random.nextInt(2);
             int startX = (int) ((direction > 0 ? base.getMaxX() : base.getMinX()) / TileMap.TILE_SIZE)
                 + direction * gap;
             if (direction < 0) startX -= length;
             int tileY = clamp((int) (base.getMinY() / TileMap.TILE_SIZE) + random.nextInt(5) - 2, 4, 16);
             if (startX < 2 || startX + length >= map.getWidthTiles() - 2) continue;
 
-            TileType type = random.nextDouble() < 0.55 ? TileType.ONE_WAY_PLATFORM : TileType.PLATFORM;
+            TileType type = random.nextDouble() < config.oneWayPlatformChance()
+                ? TileType.ONE_WAY_PLATFORM : TileType.PLATFORM;
             Rectangle2D branch = addRun(map, startX, tileY, length, type);
             map.addRewardZone(new Rectangle2D(branch.getMinX() + branch.getWidth() / 2.0 - 12,
                 branch.getMinY() - 28, 24, 24));
@@ -248,33 +272,86 @@ public class PlatformDungeonGenerator {
     }
 
     public boolean isReachableFromSpawnToExit(TileMap map, PlayerStats stats) {
+        return validatePlatformMap(map, stats).spawnToExitReachable();
+    }
+
+    public PlatformValidationResult validatePlatformMap(TileMap map, PlayerStats stats) {
         List<Rectangle2D> platforms = new ArrayList<>(map.getMainPlatforms());
         Rectangle2D exit = map.getExitBounds();
-        if (platforms.isEmpty() || exit == null) return false;
+        if (platforms.isEmpty() || exit == null) {
+            return new PlatformValidationResult(false, false, platforms.size(), 0,
+                platforms.size(), 0, map.getRewardZones().size(), seed,
+                "missing platforms or exit", List.copyOf(platforms));
+        }
 
         int start = platformContainingX(platforms, map.getSpawnX());
         int goal = platformContainingX(platforms, exit.getMinX());
-        if (start < 0 || goal < 0) return false;
+        if (start < 0 || goal < 0) {
+            return new PlatformValidationResult(false, false, platforms.size(), 0,
+                platforms.size(), 0, map.getRewardZones().size(), seed,
+                "spawn or exit is not on a platform", List.copyOf(platforms));
+        }
 
         boolean[] visited = new boolean[platforms.size()];
+        int[] depth = new int[platforms.size()];
         Queue<Integer> queue = new ArrayDeque<>();
         visited[start] = true;
         queue.add(start);
 
+        boolean spawnToExitReachable = false;
         while (!queue.isEmpty()) {
             int current = queue.remove();
-            if (current == goal) return true;
+            if (current == goal) spawnToExitReachable = true;
             Rectangle2D from = platforms.get(current);
 
             for (int next = 0; next < platforms.size(); next++) {
                 if (visited[next] || next == current) continue;
                 if (canJumpBetween(from, platforms.get(next), stats)) {
                     visited[next] = true;
+                    depth[next] = depth[current] + 1;
                     queue.add(next);
                 }
             }
         }
-        return false;
+
+        List<Rectangle2D> unreachable = new ArrayList<>();
+        int reachable = 0;
+        for (int i = 0; i < platforms.size(); i++) {
+            if (visited[i]) {
+                reachable++;
+            } else {
+                unreachable.add(platforms.get(i));
+            }
+        }
+        boolean enoughPlatformsUseful = reachable >= Math.ceil(platforms.size() * 0.70);
+        boolean rewardsReachable = areRewardsReachable(map, platforms, visited);
+        boolean valid = spawnToExitReachable && enoughPlatformsUseful && rewardsReachable;
+        String reason = valid ? "ok"
+            : !spawnToExitReachable ? "spawn cannot reach exit"
+            : !enoughPlatformsUseful ? "less than 70% of platforms are reachable"
+            : "reward platform unreachable";
+        return new PlatformValidationResult(valid, spawnToExitReachable, platforms.size(), reachable,
+            unreachable.size(), depth[goal], map.getRewardZones().size(), seed, reason,
+            List.copyOf(unreachable));
+    }
+
+    private boolean areRewardsReachable(TileMap map, List<Rectangle2D> platforms, boolean[] visited) {
+        for (Rectangle2D reward : map.getRewardZones()) {
+            int index = platformContainingX(platforms, reward.getMinX() + reward.getWidth() / 2.0);
+            if (index < 0 || !visited[index]) return false;
+        }
+        return true;
+    }
+
+    private void printGenerationReport(int levelIndex, PlatformValidationResult result) {
+        System.out.println("[DungeonMap] level=" + levelIndex
+            + " seed=" + result.seed()
+            + " platforms=" + result.platformCount()
+            + " mainPathLength=" + result.mainPathLength()
+            + " branches=" + result.branchCount()
+            + " unreachable=" + result.unreachablePlatformCount()
+            + " valid=" + result.valid()
+            + " reason=" + result.reason());
     }
 
     private boolean canJumpBetween(Rectangle2D from, Rectangle2D to, PlayerStats stats) {

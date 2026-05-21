@@ -14,6 +14,7 @@ import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.Main;
 import ncu.cs2.my_game.economy.GoldPickup;
 import ncu.cs2.my_game.economy.GoldSpawnManager;
+import ncu.cs2.my_game.effect.EffectManager;
 import ncu.cs2.my_game.entity.BombEntity;
 import ncu.cs2.my_game.entity.Boss;
 import ncu.cs2.my_game.entity.BossType;
@@ -104,6 +105,9 @@ public class BossScene extends AnimationTimer {
 
     /** 繪圖用 GraphicsContext */
     private final GraphicsContext gc;
+
+    private final EffectManager effectManager;
+    private final GameFlowController flowController;
 
     /** 玩家實體 */
     private final Player player;
@@ -210,6 +214,7 @@ public class BossScene extends AnimationTimer {
 
     private double playerPlatformDropTimer = 0;
     private Rectangle2D bossExitDoor = null;
+    private double fps = 0;
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -228,6 +233,8 @@ public class BossScene extends AnimationTimer {
 
         Scene javafxScene = CanvasSceneSupport.createScaledCanvasScene(stage, canvas);
         Fireball.setWorldBounds(Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
+        effectManager = new EffectManager();
+        flowController = GameFlowController.forScene(this::cleanup, () -> Main.startBoss());
 
         // ── 初始化玩家（帶入 Level2 結束時的血量） ────────────────────────────
         player = new Player(70, 460);
@@ -275,8 +282,12 @@ public class BossScene extends AnimationTimer {
 
         // ── 鍵盤事件 ──────────────────────────────────────────────────────────
         javafxScene.setOnKeyPressed(e -> {
+            if (flowController.handleKeyPressed(e)) return;
             // 正常移動輸入轉發給玩家
             player.handleKeyPressed(e.getCode());
+            if (player.consumeAttackStarted()) {
+                effectManager.playSlash(player);
+            }
             handleInventoryKey(e.getCode());
             if (e.getCode() == KeyCode.B) {
                 inventoryOpen = !inventoryOpen;
@@ -314,8 +325,11 @@ public class BossScene extends AnimationTimer {
         double dt = (now - lastNano) / 1_000_000_000.0;
         lastNano = now;
         if (dt > Config.MAX_DELTA_TIME) dt = Config.MAX_DELTA_TIME;
+        fps = dt > 0 ? 1.0 / dt : 0;
 
-        update(dt);
+        if (!flowController.isPaused()) {
+            update(dt);
+        }
         render(gc);
     }
 
@@ -339,8 +353,14 @@ public class BossScene extends AnimationTimer {
                 bossDropHandled = true;
                 spawnBossDrops();
                 bossExitDoor = createBossExitDoor();
+                boss.handleDeathCleanup();
+                BossUIManager.clearBossUI();
             }
 
+            if (player.consumeAttackStarted()) {
+                effectManager.playSlash(player);
+            }
+            effectManager.update(dt);
             player.update(dt);
             updatePlayerPlatformDrop(dt);
             resolvePlayerPlatformCollisions();
@@ -367,6 +387,10 @@ public class BossScene extends AnimationTimer {
         // ── 分支 3：正常遊戲邏輯 ─────────────────────────────────────────────
 
         // 1. 玩家物理更新（重力、輸入、攻擊計時）
+        if (player.consumeAttackStarted()) {
+            effectManager.playSlash(player);
+        }
+        effectManager.update(dt);
         player.update(dt);
         updatePlayerPlatformDrop(dt);
 
@@ -685,6 +709,7 @@ public class BossScene extends AnimationTimer {
         goldPickups.clear();
         goldPickups.addAll(initialSnapshot.createGoldPickups());
         bombs.clear();
+        effectManager.clear();
         boss = createBoss();
 
         phase2Triggered = false;
@@ -695,6 +720,7 @@ public class BossScene extends AnimationTimer {
         bossDeadTimer = 0;
         bossDropHandled = false;
         bossContactCooldown = 0;
+        bossExitDoor = null;
         transitioning = false;
     }
 
@@ -1142,9 +1168,11 @@ public class BossScene extends AnimationTimer {
 
         // 6. 玩家（最後畫在最上層）
         player.draw(gc);
+        effectManager.draw(gc);
 
         // 7. HUD（玩家左上角 + Boss 頂部中央）
         drawHUD(gc);
+        flowController.drawDebugOverlay(gc, debugLines());
 
         // 7. 紅色閃光疊加層（階段轉換時）
         if (flashTimer > 0) {
@@ -1160,6 +1188,7 @@ public class BossScene extends AnimationTimer {
         if (!player.isAlive() && boss.getCurrentState() != BossState.DEAD) {
             drawGameOverOverlay(gc);
         }
+        flowController.drawPauseOverlay(gc);
     }
 
     /**
@@ -1245,40 +1274,7 @@ public class BossScene extends AnimationTimer {
      * @param gc 畫布繪圖上下文
      */
     private void drawBossHpBar(GraphicsContext gc) {
-        final double barX = (Config.WINDOW_WIDTH - BOSS_BAR_W) / 2.0;   // 水平置中
-        final double barY = 82;
-
-        // Boss 名稱（TODO: 換成設計好的字型與角色名稱）
-        gc.setFill(Color.LIGHTGRAY);
-        gc.setFont(Font.font(11));
-        String bossName = boss.getDisplayName();
-        gc.fillText(bossName,
-                    barX + BOSS_BAR_W / 2.0 - bossName.length() * 3.2,
-                    barY - 2);
-
-        // 血量條背景（深紅底）
-        gc.setFill(Color.web("#4a0000"));
-        gc.fillRect(barX, barY, BOSS_BAR_W, BOSS_BAR_H);
-
-        // 血量條前景（紅色系，以區別於玩家的綠色系）
-        double ratio    = (double) boss.getHp() / boss.getMaxHp();
-        Color  barColor = ratio > 0.6 ? Color.web("#e53935")    // 鮮紅
-                        : ratio > 0.3 ? Color.web("#ff6d00")    // 橘紅
-                                      : Color.web("#b71c1c");   // 暗紅（危險）
-        gc.setFill(barColor);
-        gc.fillRect(barX, barY, BOSS_BAR_W * ratio, BOSS_BAR_H);
-
-        // 血量條外框
-        gc.setStroke(Color.web("#7f0000"));
-        gc.setLineWidth(1.5);
-        gc.strokeRect(barX, barY, BOSS_BAR_W, BOSS_BAR_H);
-
-        // 血量數值文字（置於血量條右側）
-        gc.setFill(Color.LIGHTGRAY);
-        gc.setFont(Font.font(11));
-        gc.fillText(boss.getHp() + " / " + boss.getMaxHp(),
-                    barX + BOSS_BAR_W + 6, barY + 13);
-
+        BossUIManager.drawBossHealthBar(gc, boss);
     }
 
     /**
@@ -1351,5 +1347,52 @@ public class BossScene extends AnimationTimer {
         gc.fillText("按 R 重新開始",
                     Config.WINDOW_WIDTH / 2.0 - 65,
                     Config.WINDOW_HEIGHT / 2.0 + 40);
+    }
+
+    private List<String> debugLines() {
+        List<String> lines = new ArrayList<>();
+        int aliveMinions = 0;
+        for (Enemy minion : boss.getMinions()) {
+            if (minion.isAlive()) aliveMinions++;
+        }
+        lines.add(String.format("FPS: %.0f", fps));
+        lines.add(String.format("Player: %.1f, %.1f", player.getX(), player.getY()));
+        lines.add(String.format("Velocity: %.1f, %.1f", player.getVelocityX(), player.getVelocityY()));
+        lines.add("Stage: BOSS - " + boss.getDisplayName());
+        lines.add("Enemy count: " + aliveMinions);
+        lines.add("Boss alive: " + (boss.isAlive() && !boss.isDeathHandled()));
+        lines.add("Boss death handled: " + boss.isDeathHandled());
+        lines.add("Projectiles: " + countProjectiles());
+        lines.add("Effects: " + effectManager.getActiveEffectCount());
+        lines.add("Paused: " + flowController.isPaused());
+        lines.add("Object count: " + (pickupItems.size() + goldPickups.size() + bombs.size()
+            + aliveMinions + effectManager.getActiveEffectCount()));
+        return lines;
+    }
+
+    private int countProjectiles() {
+        int count = player.getFireballs().size() + player.getIceProjectiles().size()
+            + boss.getProjectiles().size() + bombs.size();
+        for (Enemy minion : boss.getMinions()) {
+            if (minion instanceof RangedEnemy ranged) {
+                count += ranged.getProjectiles().size();
+            }
+        }
+        return count;
+    }
+
+    private void cleanup() {
+        this.stop();
+        effectManager.clear();
+        player.getFireballs().clear();
+        player.getIceProjectiles().clear();
+        bombs.clear();
+        pickupItems.clear();
+        goldPickups.clear();
+        if (boss != null) {
+            boss.handleDeathCleanup();
+        }
+        BossUIManager.clearBossUI();
+        bossExitDoor = null;
     }
 }

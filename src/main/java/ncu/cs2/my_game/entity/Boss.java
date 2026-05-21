@@ -45,6 +45,8 @@ public class Boss extends Entity {
     private Rectangle2D[] dashBlockers = new Rectangle2D[0];
     private Rectangle2D[] dashSurfaces = new Rectangle2D[0];
     private double dashWorldWidth = Config.WINDOW_WIDTH;
+    private boolean isDead;
+    private boolean deathHandled;
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -67,6 +69,8 @@ public class Boss extends Entity {
         this.projectiles = new ArrayList<>();
         this.onGround    = false;
         this.jumpCooldown = 0.8;
+        this.isDead = false;
+        this.deathHandled = false;
         // 將 this::shootProjectile 傳入 FSM，讓 RAGE 狀態直接呼叫
         this.fsm         = new BossStateMachine(this, player, this::shootProjectile);
     }
@@ -81,6 +85,8 @@ public class Boss extends Entity {
      */
     @Override
     public void update(double deltaTime) {
+        if (isDead || deathHandled) return;
+
         // 1. FSM 決定水平速度與狀態轉換
         fsm.update(deltaTime);
         if (slowTimer > 0) {
@@ -116,7 +122,13 @@ public class Boss extends Entity {
      * @param amount 傷害量（正整數）
      */
     public void takeDamage(int amount) {
+        if (isDead || deathHandled) return;
         fsm.onHit(amount);
+        if (!isAlive()) {
+            isDead = true;
+            velocityX = 0;
+            velocityY = 0;
+        }
     }
 
     public void applySlow(double duration, double multiplier) {
@@ -190,6 +202,7 @@ public class Boss extends Entity {
      * 投射物從 Boss 的水平中心、垂直中心飛出，Y 軸固定不受重力影響。
      */
     public void shootProjectile() {
+        if (isDead || deathHandled || !isAlive()) return;
         double bossCenterX = x + width / 2.0;
         double bossCenterY = y + height / 2.0;
         double playerCenterX = player.getX() + player.getWidth() / 2.0;
@@ -216,6 +229,7 @@ public class Boss extends Entity {
      * @return DASH 中的攻擊矩形，或 null
      */
     public Rectangle2D getAttackBox() {
+        if (isDead || deathHandled) return null;
         if (fsm.getCurrentState() != BossState.DASH) return null;
 
         // 依 velocityX 決定衝刺方向；若速度恰好為 0 則以玩家位置判斷
@@ -234,12 +248,7 @@ public class Boss extends Entity {
      */
     @Override
     public void draw(GraphicsContext gc) {
-        // 死亡後只顯示灰色殘影，不繪製其他 UI
-        if (!isAlive()) {
-            gc.setFill(Color.DARKGRAY);
-            gc.fillRect(x, y, width, height);
-            return;
-        }
+        if (isDead || deathHandled || !isAlive()) return;
 
         drawBody(gc);
         drawAttackBoxDebug(gc);
@@ -351,6 +360,34 @@ public class Boss extends Entity {
 
     /** 回傳目前 FSM 狀態（供 GameScene 判斷勝負條件） */
     public BossState getCurrentState() { return fsm.getCurrentState(); }
+
+    public boolean isDead() { return isDead || deathHandled || !isAlive(); }
+
+    public boolean isDeathHandled() { return deathHandled; }
+
+    public boolean handleDeathCleanup() {
+        if (deathHandled) return false;
+        deathHandled = true;
+        isDead = true;
+        hp = 0;
+        velocityX = 0;
+        velocityY = 0;
+        projectiles.clear();
+        clearOwnedEntities();
+        return true;
+    }
+
+    protected void clearOwnedEntities() {
+        // Subclasses clear spikes or minions here.
+    }
+
+    @Override
+    public Rectangle2D getHitbox() {
+        if (isDead || deathHandled) {
+            return new Rectangle2D(x, y, 0, 0);
+        }
+        return super.getHitbox();
+    }
 
     public BossType getBossType() { return BossType.FIREBALL; }
 

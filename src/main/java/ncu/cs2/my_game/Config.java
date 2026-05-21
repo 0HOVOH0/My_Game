@@ -84,6 +84,24 @@ public final class Config {
     /** 玩家火球傷害 */
     public static final int FIREBALL_DAMAGE = 25;
 
+    /** Slash attack GIF resource path. Replace this file to change the attack effect. */
+    public static final String SLASH_EFFECT_RESOURCE = "/assets/effects/slash.gif";
+
+    /** Slash attack fallback file name for local development. */
+    public static final String SLASH_EFFECT_FALLBACK_FILE = "斬擊.gif";
+
+    /** Slash attack effect width in world pixels. */
+    public static final double SLASH_EFFECT_WIDTH = 120.0;
+
+    /** Slash attack effect height in world pixels. */
+    public static final double SLASH_EFFECT_HEIGHT = 90.0;
+
+    /** How long the slash GIF stays alive; visual only, damage still uses attack hitbox. */
+    public static final double SLASH_EFFECT_DURATION = 0.36;
+
+    /** Extra effect spawn cooldown to avoid repeated GIF allocation while attack is held. */
+    public static final double SLASH_EFFECT_COOLDOWN = 0.12;
+
     /** Boss 最大血量 */
     public static final int BOSS_MAX_HP   = 600;
 
