@@ -11,6 +11,7 @@ import ncu.cs2.my_game.scene.BossScene;
 import ncu.cs2.my_game.scene.GameScene;
 import ncu.cs2.my_game.scene.Level1Scene;
 import ncu.cs2.my_game.scene.Level2Scene;
+import ncu.cs2.my_game.scene.SceneTransitionManager;
 import ncu.cs2.my_game.scene.ShopScene;
 import ncu.cs2.my_game.stage.StageDefinition;
 import ncu.cs2.my_game.stage.StageGenerator;
@@ -69,6 +70,10 @@ public class Main extends Application {
 
     private static BossType lastBossType = null;
 
+    private static BossType activeBossType = null;
+
+    private static Runnable activeSceneCleanup = null;
+
     /**
      * JavaFX 啟動方法，初始化視窗並載入主選單場景
      */
@@ -121,6 +126,8 @@ public class Main extends Application {
      * 同時重置血量與計時器（Level1 永遠是全新開局）。
      */
     public static void startLevel1() {
+        stopActiveSceneIfAny();
+        SceneTransitionManager.resetForNewGame();
         persistedHp     = Config.PLAYER_MAX_HP;
         persistedMana   = Config.PLAYER_MAX_MANA;
         inventory       = new Inventory();
@@ -129,6 +136,7 @@ public class Main extends Application {
         stageNumber     = 1;
         normalStagesInCycle = 1;
         lastBossType = null;
+        activeBossType = null;
         nextStageDefinition = stageGenerator.nextStage();
         gameStartMillis = System.currentTimeMillis();
         new Level1Scene(primaryStage);
@@ -139,6 +147,7 @@ public class Main extends Application {
      * Level2Scene 繼承 AnimationTimer，建構子內部會自動呼叫 start()。
      */
     public static void startLevel2() {
+        stopActiveSceneIfAny();
         new Level2Scene(primaryStage, nextStageDefinition);
     }
 
@@ -146,6 +155,7 @@ public class Main extends Application {
      * 建立 ShopScene，固定插在 Boss 關之前。
      */
     public static void startShop() {
+        stopActiveSceneIfAny();
         new ShopScene(primaryStage);
     }
 
@@ -168,6 +178,7 @@ public class Main extends Application {
      * 由 ShopScene 觸發，也作為玩家死亡後按 R 的重啟目標。
      */
     public static void startBoss() {
+        stopActiveSceneIfAny();
         new BossScene(primaryStage);
     }
 
@@ -176,6 +187,7 @@ public class Main extends Application {
      * 由 BossScene 在 Boss 死亡後延遲 1 秒呼叫。
      */
     public static void startEnd() {
+        stopActiveSceneIfAny();
         elapsedSeconds = (System.currentTimeMillis() - gameStartMillis) / 1000L;
         switchScene("end-scene.fxml");
     }
@@ -252,13 +264,20 @@ public class Main extends Application {
         stageNumber++;
         normalStagesInCycle = 0;
         nextStageDefinition = stageGenerator.nextStage();
+        activeBossType = null;
+        SceneTransitionManager.setCurrentBossType(null);
+        SceneTransitionManager.setBossFightSnapshotActive(false);
     }
 
     public static void exitToMainMenu() {
-        switchScene("main-menu.fxml");
+        stopActiveSceneIfAny();
+        activeBossType = null;
+        SceneTransitionManager.showMainMenu();
+        switchScene("start-scene.fxml");
     }
 
     public static void quitGame() {
+        stopActiveSceneIfAny();
         Platform.exit();
     }
 
@@ -270,6 +289,37 @@ public class Main extends Application {
         }
         lastBossType = picked;
         return picked;
+    }
+
+    public static BossType getOrCreateBossType() {
+        if (activeBossType == null) {
+            activeBossType = rollBossType();
+        }
+        SceneTransitionManager.setCurrentBossType(activeBossType);
+        return activeBossType;
+    }
+
+    public static void registerActiveScene(String sceneName, int level,
+                                           ncu.cs2.my_game.scene.GameState state,
+                                           Runnable cleanup) {
+        activeSceneCleanup = cleanup;
+        SceneTransitionManager.registerScene(sceneName, level, state);
+    }
+
+    public static void clearActiveScene(Runnable cleanup) {
+        if (activeSceneCleanup == cleanup) {
+            activeSceneCleanup = null;
+        }
+        SceneTransitionManager.clearActiveLoop();
+    }
+
+    private static void stopActiveSceneIfAny() {
+        Runnable cleanup = activeSceneCleanup;
+        activeSceneCleanup = null;
+        if (cleanup != null) {
+            cleanup.run();
+        }
+        SceneTransitionManager.clearActiveLoop();
     }
 
     /** 程式進入點 */

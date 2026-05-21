@@ -182,6 +182,7 @@ public class Level2Scene extends AnimationTimer {
 
     /** 是否已觸發場景切換，防止 handle() 重複呼叫 startBoss */
     private boolean transitioning = false;
+    private boolean portalEnterRequested = false;
 
     /** 玩家死亡後是否按下了 R 鍵，觸發重啟 Level2 */
     private boolean rKeyPressed = false;
@@ -219,6 +220,7 @@ public class Level2Scene extends AnimationTimer {
         player.startInvincibility(Config.PLAYER_SPAWN_PROTECTION_SECONDS);
         effectManager = new EffectManager();
         flowController = GameFlowController.forScene(this::cleanup, () -> Main.startLevel2());
+        Main.registerActiveScene("LEVEL_2", 2, GameState.PLAYING, this::cleanup);
 
         // ── 地板 ──────────────────────────────────────────────────────────────
         ground = new Rectangle2D(0, GROUND_Y, WORLD_WIDTH, Config.GROUND_THICKNESS);
@@ -269,6 +271,17 @@ public class Level2Scene extends AnimationTimer {
 
         // ── 綁定鍵盤事件 ──────────────────────────────────────────────────────
         javafxScene.setOnKeyPressed(e -> {
+            if (SceneTransitionManager.isTransitioning()) return;
+            if (!player.isAlive() && e.getCode() == KeyCode.R) {
+                rKeyPressed = true;
+                e.consume();
+                return;
+            }
+            if (isPortalEnterKey(e.getCode()) && isNearGoalDoor()) {
+                portalEnterRequested = true;
+                e.consume();
+                return;
+            }
             if (flowController.handleKeyPressed(e)) return;
             player.handleKeyPressed(e.getCode());
             if (player.consumeAttackStarted()) {
@@ -277,9 +290,6 @@ public class Level2Scene extends AnimationTimer {
             handleInventoryKey(e.getCode());
             if (e.getCode() == KeyCode.B) {
                 inventoryOpen = !inventoryOpen;
-            }
-            if (e.getCode() == KeyCode.R && !player.isAlive()) {
-                rKeyPressed = true;
             }
         });
         javafxScene.setOnKeyReleased(e -> player.handleKeyReleased(e.getCode()));
@@ -309,6 +319,7 @@ public class Level2Scene extends AnimationTimer {
         double dt = (now - lastNano) / 1_000_000_000.0;
         lastNano = now;
         if (dt > Config.MAX_DELTA_TIME) dt = Config.MAX_DELTA_TIME;
+        SceneTransitionManager.tick(dt);
         fps = dt > 0 ? 1.0 / dt : 0;
 
         if (!flowController.isPaused()) {
@@ -1175,14 +1186,17 @@ public class Level2Scene extends AnimationTimer {
      * transitioning 旗標防止重複觸發。
      */
     private void checkGoalDoor() {
-        if (transitioning) return;
+        if (transitioning || SceneTransitionManager.isTransitioning()) return;
 
-        if (Collision.checkAABB(player.getHitbox(), goalDoor)) {
+        boolean nearGoal = Collision.checkAABB(player.getHitbox(), goalDoor);
+        if (nearGoal && portalEnterRequested && player.isOnGround()
+            && SceneTransitionManager.tryBeginTransition("LEVEL_2_TO_NEXT")) {
             transitioning = true;
             Main.setPersistedPlayerState(player.getHp(), player.getMana());   // 帶入狀態到 Boss 關
             this.stop();
             Main.completeNormalStage();
         }
+        portalEnterRequested = false;
     }
 
     // ── render ────────────────────────────────────────────────────────────────
@@ -1238,6 +1252,7 @@ public class Level2Scene extends AnimationTimer {
         // 8. 玩家（最後繪製，顯示在最上層）
         player.draw(gc);
         effectManager.draw(gc);
+        drawGoalPrompt(gc);
         gc.restore();
 
         // 9. HUD：左上角血量條
@@ -1393,11 +1408,19 @@ public class Level2Scene extends AnimationTimer {
         lines.add(String.format("FPS: %.0f", fps));
         lines.add(String.format("Player: %.1f, %.1f", player.getX(), player.getY()));
         lines.add(String.format("Velocity: %.1f, %.1f", player.getVelocityX(), player.getVelocityY()));
+        lines.add("GameState: " + SceneTransitionManager.getCurrentGameState());
+        lines.add("Transitioning: " + SceneTransitionManager.isTransitioning());
         lines.add("Stage: " + stageDefinition.getHudTitle());
+        lines.add("Current level: " + SceneTransitionManager.getCurrentLevel());
+        lines.add("Boss type: " + SceneTransitionManager.getCurrentBossType());
+        lines.add(String.format("Portal cooldown: %.2f", SceneTransitionManager.getPortalCooldown()));
+        lines.add("Active loops: " + SceneTransitionManager.getActiveGameLoopCount());
+        lines.add("Scene: " + SceneTransitionManager.getCurrentSceneName());
         lines.add("Enemy count: " + aliveEnemies + "/" + enemies.length);
         lines.add("Boss alive: false");
         lines.add("Projectiles: " + countProjectiles());
         lines.add("Effects: " + effectManager.getActiveEffectCount());
+        lines.add("Inventory: " + debugInventorySlots());
         lines.add("Paused: " + flowController.isPaused());
         if (result != null) {
             lines.add("Map seed: " + result.seed());
@@ -1412,6 +1435,37 @@ public class Level2Scene extends AnimationTimer {
             lines.add("Validation: " + mapResult.reason());
         }
         return lines;
+    }
+
+    private void drawGoalPrompt(GraphicsContext gc) {
+        if (!isNearGoalDoor()) return;
+        gc.setFill(Color.WHITE);
+        gc.setFont(Font.font(14));
+        gc.fillText("Press W / Up / Enter", goalDoor.getMinX() - 42, goalDoor.getMinY() - 12);
+    }
+
+    private boolean isNearGoalDoor() {
+        return Collision.checkAABB(player.getHitbox(), inflate(goalDoor, 12));
+    }
+
+    private Rectangle2D inflate(Rectangle2D rect, double amount) {
+        return new Rectangle2D(rect.getMinX() - amount, rect.getMinY() - amount,
+            rect.getWidth() + amount * 2, rect.getHeight() + amount * 2);
+    }
+
+    private boolean isPortalEnterKey(KeyCode key) {
+        return key == KeyCode.W || key == KeyCode.UP || key == KeyCode.ENTER;
+    }
+
+    private String debugInventorySlots() {
+        List<String> slots = new ArrayList<>();
+        for (int i = 0; i < inventory.getCapacity(); i++) {
+            InventorySlot slot = inventory.getSlot(i);
+            slots.add(slot == null || slot.isEmpty()
+                ? "-"
+                : slot.getType().name() + "x" + slot.getCount());
+        }
+        return String.join(",", slots);
     }
 
     private int countProjectiles() {

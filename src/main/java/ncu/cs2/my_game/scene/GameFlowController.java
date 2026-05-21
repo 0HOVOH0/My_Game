@@ -40,6 +40,7 @@ public class GameFlowController {
         }
         if (key == KeyCode.ESCAPE || key == KeyCode.P) {
             paused = !paused;
+            SceneTransitionManager.setPaused(paused);
             event.consume();
             return true;
         }
@@ -75,6 +76,7 @@ public class GameFlowController {
 
     public void setPaused(boolean paused) {
         this.paused = paused;
+        SceneTransitionManager.setPaused(paused);
     }
 
     public void drawPauseOverlay(GraphicsContext gc) {

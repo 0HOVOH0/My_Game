@@ -52,6 +52,8 @@ public class ShopScene extends AnimationTimer {
     private double messageTimer;
     private long lastNano;
     private double playerPlatformDropTimer;
+    private boolean transitioning;
+    private boolean portalEnterRequested;
 
     public ShopScene(Stage stage) {
         this.stage = stage;
@@ -77,6 +79,7 @@ public class ShopScene extends AnimationTimer {
         pickupItems = new ArrayList<>();
         itemSpawnManager = new ItemSpawnManager(ground, platforms);
         shopManager = new ShopManager(Main.getStageNumber());
+        Main.registerActiveScene("SHOP", Main.getStageNumber(), GameState.PLAYING, this::cleanup);
 
         scene.setOnKeyPressed(e -> handleKeyPressed(e.getCode()));
         scene.setOnKeyReleased(e -> player.handleKeyReleased(e.getCode()));
@@ -94,17 +97,23 @@ public class ShopScene extends AnimationTimer {
         double dt = (now - lastNano) / 1_000_000_000.0;
         lastNano = now;
         if (dt > Config.MAX_DELTA_TIME) dt = Config.MAX_DELTA_TIME;
+        SceneTransitionManager.tick(dt);
 
         update(dt);
         render();
     }
 
     private void handleKeyPressed(KeyCode key) {
+        if (SceneTransitionManager.isTransitioning()) return;
         if (shopOpen) {
             handleShopKey(key);
             return;
         }
 
+        if (isPortalEnterKey(key) && isNearExitDoor()) {
+            portalEnterRequested = true;
+            return;
+        }
         player.handleKeyPressed(key);
         if (key == KeyCode.B) inventoryOpen = !inventoryOpen;
         if (key == KeyCode.E && isNearShop()) shopOpen = true;
@@ -149,11 +158,17 @@ public class ShopScene extends AnimationTimer {
         checkPickupItems();
         if (messageTimer > 0) messageTimer -= dt;
 
-        if (Collision.checkAABB(player.getHitbox(), exitDoor)) {
+        if (!transitioning
+            && Collision.checkAABB(player.getHitbox(), exitDoor)
+            && portalEnterRequested
+            && player.isOnGround()
+            && SceneTransitionManager.tryBeginTransition("SHOP_TO_BOSS")) {
+            transitioning = true;
             Main.setPersistedPlayerState(player.getHp(), player.getMana());
             stop();
             Main.startBoss();
         }
+        portalEnterRequested = false;
     }
 
     private void resolveCollisions() {
@@ -264,6 +279,16 @@ public class ShopScene extends AnimationTimer {
         return player.getHitbox().intersects(shopCounter);
     }
 
+    private boolean isNearExitDoor() {
+        Rectangle2D area = new Rectangle2D(exitDoor.getMinX() - 12, exitDoor.getMinY() - 12,
+            exitDoor.getWidth() + 24, exitDoor.getHeight() + 24);
+        return Collision.checkAABB(player.getHitbox(), area);
+    }
+
+    private boolean isPortalEnterKey(KeyCode key) {
+        return key == KeyCode.W || key == KeyCode.UP || key == KeyCode.ENTER;
+    }
+
     private void showMessage(String text) {
         message = text;
         messageTimer = 1.5;
@@ -290,6 +315,7 @@ public class ShopScene extends AnimationTimer {
         HudRenderer.drawInventorySlots(gc, inventory, selectedInventorySlot);
         if (inventoryOpen) HudRenderer.drawInventoryOverlay(gc, inventory, selectedInventorySlot);
         if (isNearShop() && !shopOpen) drawOpenPrompt();
+        if (isNearExitDoor()) drawExitPrompt();
         if (shopOpen) drawShopUI();
         if (messageTimer > 0) drawMessage();
     }
@@ -317,6 +343,12 @@ public class ShopScene extends AnimationTimer {
         gc.setFill(Color.WHITE);
         gc.setFont(Font.font(14));
         gc.fillText("E = Open Shop", shopCounter.getMinX() + 8, shopCounter.getMinY() - 38);
+    }
+
+    private void drawExitPrompt() {
+        gc.setFill(Color.WHITE);
+        gc.setFont(Font.font(14));
+        gc.fillText("Press W / Up / Enter", exitDoor.getMinX() - 82, exitDoor.getMinY() - 12);
     }
 
     private void drawShopUI() {
@@ -357,5 +389,12 @@ public class ShopScene extends AnimationTimer {
         gc.setFill(Color.WHITE);
         gc.setFont(Font.font(13));
         gc.fillText(message, 316, 412);
+    }
+
+    private void cleanup() {
+        stop();
+        pickupItems.clear();
+        player.getFireballs().clear();
+        player.getIceProjectiles().clear();
     }
 }

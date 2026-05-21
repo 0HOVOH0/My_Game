@@ -5,6 +5,7 @@ import javafx.geometry.Rectangle2D;
 import javafx.scene.Scene;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
+import javafx.scene.input.KeyCode;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.stage.Stage;
@@ -39,6 +40,7 @@ public class Level1Scene extends AnimationTimer {
 
     private long lastNano = 0;
     private boolean transitioning = false;
+    private boolean portalEnterRequested = false;
     private double cameraX = 0;
     private double playerPlatformDropTimer = 0;
     private double fps = 0;
@@ -58,8 +60,15 @@ public class Level1Scene extends AnimationTimer {
         player.startInvincibility(Config.PLAYER_SPAWN_PROTECTION_SECONDS);
         effectManager = new EffectManager();
         flowController = GameFlowController.forScene(this::cleanup, () -> Main.startLevel1());
+        Main.registerActiveScene("LEVEL_1", 1, GameState.PLAYING, this::cleanup);
 
         javafxScene.setOnKeyPressed(e -> {
+            if (SceneTransitionManager.isTransitioning()) return;
+            if (isPortalEnterKey(e.getCode()) && isNearGoalDoor()) {
+                portalEnterRequested = true;
+                e.consume();
+                return;
+            }
             if (flowController.handleKeyPressed(e)) return;
             player.handleKeyPressed(e.getCode());
             if (player.consumeAttackStarted()) {
@@ -83,6 +92,7 @@ public class Level1Scene extends AnimationTimer {
         lastNano = now;
         if (dt > Config.MAX_DELTA_TIME) dt = Config.MAX_DELTA_TIME;
         fps = dt > 0 ? 1.0 / dt : 0;
+        SceneTransitionManager.tick(dt);
 
         if (!flowController.isPaused()) {
             update(dt);
@@ -200,13 +210,16 @@ public class Level1Scene extends AnimationTimer {
     }
 
     private void checkGoalDoor() {
-        if (transitioning) return;
-        if (Collision.checkAABB(player.getHitbox(), goalDoor)) {
+        if (transitioning || SceneTransitionManager.isTransitioning()) return;
+        boolean nearGoal = Collision.checkAABB(player.getHitbox(), goalDoor);
+        if (nearGoal && portalEnterRequested && player.isOnGround()
+            && SceneTransitionManager.tryBeginTransition("LEVEL_1_TO_LEVEL_2")) {
             transitioning = true;
             Main.setPersistedPlayerState(player.getHp(), player.getMana());
             this.stop();
             Main.startLevel2();
         }
+        portalEnterRequested = false;
     }
 
     private void updateCamera() {
@@ -224,6 +237,7 @@ public class Level1Scene extends AnimationTimer {
         gc.translate(-cameraX, 0);
         player.draw(gc);
         effectManager.draw(gc);
+        drawGoalPrompt(gc);
         gc.restore();
 
         HudRenderer.drawPlayerStatus(gc, player, "LEVEL 1");
@@ -270,7 +284,13 @@ public class Level1Scene extends AnimationTimer {
         lines.add(String.format("FPS: %.0f", fps));
         lines.add(String.format("Player: %.1f, %.1f", player.getX(), player.getY()));
         lines.add(String.format("Velocity: %.1f, %.1f", player.getVelocityX(), player.getVelocityY()));
+        lines.add("GameState: " + SceneTransitionManager.getCurrentGameState());
+        lines.add("Transitioning: " + SceneTransitionManager.isTransitioning());
         lines.add("Stage: LEVEL 1");
+        lines.add("Current level: " + SceneTransitionManager.getCurrentLevel());
+        lines.add(String.format("Portal cooldown: %.2f", SceneTransitionManager.getPortalCooldown()));
+        lines.add("Active loops: " + SceneTransitionManager.getActiveGameLoopCount());
+        lines.add("Scene: " + SceneTransitionManager.getCurrentSceneName());
         lines.add("Enemy count: 0");
         lines.add("Boss alive: false");
         lines.add("Projectiles: " + player.getFireballs().size());
@@ -289,6 +309,22 @@ public class Level1Scene extends AnimationTimer {
             lines.add("Validation: " + mapResult.reason());
         }
         return lines;
+    }
+
+    private void drawGoalPrompt(GraphicsContext gc) {
+        if (!isNearGoalDoor()) return;
+        gc.setFill(Color.WHITE);
+        gc.setFont(Font.font(14));
+        gc.fillText("Press W / Up / Enter", goalDoor.getMinX() - 42, goalDoor.getMinY() - 12);
+    }
+
+    private boolean isNearGoalDoor() {
+        Rectangle2D area = inflate(goalDoor, 12);
+        return Collision.checkAABB(player.getHitbox(), area);
+    }
+
+    private boolean isPortalEnterKey(KeyCode key) {
+        return key == KeyCode.W || key == KeyCode.UP || key == KeyCode.ENTER;
     }
 
     private void cleanup() {

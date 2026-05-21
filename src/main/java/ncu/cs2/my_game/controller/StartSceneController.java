@@ -17,6 +17,6 @@ public class StartSceneController {
     /** 點擊「離開」：結束程式 */
     @FXML
     private void onExit() {
-        System.exit(0);
+        Main.quitGame();
     }
 }

@@ -34,6 +34,7 @@ import ncu.cs2.my_game.item.PickupItem;
 import ncu.cs2.my_game.item.PickupType;
 import ncu.cs2.my_game.item.UseContext;
 import ncu.cs2.my_game.physics.Collision;
+import ncu.cs2.my_game.state.BossFightSnapshot;
 import ncu.cs2.my_game.state.StageSnapshot;
 
 import java.util.ArrayList;
@@ -144,6 +145,8 @@ public class BossScene extends AnimationTimer {
     /** Boss 關剛進入時的狀態快照 */
     private final StageSnapshot initialSnapshot;
 
+    private final BossFightSnapshot bossFightSnapshot;
+
     /** 地板碰撞框（橫跨整個畫面底部） */
     private final Rectangle2D ground;
 
@@ -196,6 +199,7 @@ public class BossScene extends AnimationTimer {
 
     /** 是否已觸發場景切換，防止 handle() 重複觸發 Main.startEnd() */
     private boolean transitioning = false;
+    private boolean portalEnterRequested = false;
 
     /**
      * 玩家死亡後是否按下了 R 鍵。
@@ -235,6 +239,7 @@ public class BossScene extends AnimationTimer {
         Fireball.setWorldBounds(Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
         effectManager = new EffectManager();
         flowController = GameFlowController.forScene(this::cleanup, () -> Main.startBoss());
+        Main.registerActiveScene("BOSS", Main.getStageNumber(), GameState.BOSS_FIGHT, this::cleanup);
 
         // ── 初始化玩家（帶入 Level2 結束時的血量） ────────────────────────────
         player = new Player(70, 460);
@@ -268,7 +273,8 @@ public class BossScene extends AnimationTimer {
         visionBlockers = mergeBlockers(platforms, covers);
         dashSurfaces = mergeBlockers(new Rectangle2D[] { ground }, visionBlockers);
         navigationSurfaces = dashSurfaces;
-        bossType = Main.rollBossType();
+        bossType = Main.getOrCreateBossType();
+        SceneTransitionManager.setBossFightState(BossFightState.FIGHTING);
         boss = createBoss();
         itemSpawnManager = new ItemSpawnManager(ground, platforms, covers);
         goldSpawnManager = new GoldSpawnManager(ground, platforms, covers);
@@ -280,9 +286,23 @@ public class BossScene extends AnimationTimer {
             inventory, pickupItems, goldPickups, new ArrayList<>(),
             false, 0, 0, 0, 0
         );
+        bossFightSnapshot = new BossFightSnapshot(initialSnapshot, bossType, selectedInventorySlot);
+        SceneTransitionManager.setBossFightSnapshotActive(true);
 
         // ── 鍵盤事件 ──────────────────────────────────────────────────────────
         javafxScene.setOnKeyPressed(e -> {
+            if (SceneTransitionManager.isTransitioning()) return;
+            if (!player.isAlive() && e.getCode() == KeyCode.R) {
+                rKeyPressed = true;
+                e.consume();
+                return;
+            }
+            if (isPortalEnterKey(e.getCode()) && bossExitDoor != null
+                && Collision.checkAABB(player.getHitbox(), inflate(bossExitDoor, 14))) {
+                portalEnterRequested = true;
+                e.consume();
+                return;
+            }
             if (flowController.handleKeyPressed(e)) return;
             // 正常移動輸入轉發給玩家
             player.handleKeyPressed(e.getCode());
@@ -294,10 +314,6 @@ public class BossScene extends AnimationTimer {
                 inventoryOpen = !inventoryOpen;
             }
 
-            // 玩家死亡時按 R 重啟本關
-            if (e.getCode() == KeyCode.R && !player.isAlive()) {
-                rKeyPressed = true;
-            }
         });
         javafxScene.setOnKeyReleased(e -> player.handleKeyReleased(e.getCode()));
 
@@ -327,6 +343,7 @@ public class BossScene extends AnimationTimer {
         lastNano = now;
         if (dt > Config.MAX_DELTA_TIME) dt = Config.MAX_DELTA_TIME;
         fps = dt > 0 ? 1.0 / dt : 0;
+        SceneTransitionManager.tick(dt);
 
         if (!flowController.isPaused()) {
             update(dt);
@@ -350,6 +367,7 @@ public class BossScene extends AnimationTimer {
 
         // ── 分支 1：Boss 死亡倒計時 ───────────────────────────────────────────
         if (boss.getCurrentState() == BossState.DEAD) {
+            SceneTransitionManager.setBossFightState(BossFightState.BOSS_DEFEATED);
             if (!bossDropHandled) {
                 bossDropHandled = true;
                 spawnBossDrops();
@@ -378,9 +396,12 @@ public class BossScene extends AnimationTimer {
 
         // ── 分支 2：玩家死亡，等待重啟 ───────────────────────────────────────
         if (!player.isAlive()) {
+            SceneTransitionManager.setBossFightState(BossFightState.PLAYER_DIED);
             if (rKeyPressed) {
                 rKeyPressed   = false;
+                SceneTransitionManager.setBossFightState(BossFightState.RETRYING);
                 rollbackToInitialSnapshot();
+                SceneTransitionManager.setBossFightState(BossFightState.FIGHTING);
             }
             return;
         }
@@ -656,13 +677,18 @@ public class BossScene extends AnimationTimer {
     }
 
     private void checkBossExitDoor() {
-        if (bossExitDoor == null || transitioning) return;
-        if (Collision.checkAABB(player.getHitbox(), bossExitDoor)) {
+        if (bossExitDoor == null || transitioning || SceneTransitionManager.isTransitioning()) return;
+        boolean nearDoor = Collision.checkAABB(player.getHitbox(), bossExitDoor);
+        if (nearDoor && portalEnterRequested && player.isOnGround()
+            && SceneTransitionManager.tryBeginTransition("BOSS_TO_NEXT_LEVEL")) {
             transitioning = true;
             this.stop();
+            SceneTransitionManager.setBossFightState(BossFightState.COMPLETED);
+            SceneTransitionManager.setBossFightSnapshotActive(false);
             Main.advanceAfterBoss();
             Main.startLevel2();
         }
+        portalEnterRequested = false;
     }
 
     /**
@@ -700,19 +726,23 @@ public class BossScene extends AnimationTimer {
      * 死亡重生時回滾到剛進入 Boss 關的狀態。
      */
     private void rollbackToInitialSnapshot() {
-        player.resetForCheckpoint(initialSnapshot.getPlayerX(),
-                                  initialSnapshot.getPlayerY(),
-                                  initialSnapshot.getPlayerHp(),
-                                  initialSnapshot.getPlayerMana());
+        StageSnapshot snapshot = bossFightSnapshot.getStageSnapshot();
+        player.resetForCheckpoint(snapshot.getPlayerX(),
+                                  snapshot.getPlayerY(),
+                                  snapshot.getPlayerHp(),
+                                  snapshot.getPlayerMana());
         player.startInvincibility(Config.PLAYER_SPAWN_PROTECTION_SECONDS);
-        initialSnapshot.restoreInventory(inventory);
+        snapshot.restoreInventory(inventory);
+        selectedInventorySlot = bossFightSnapshot.getSelectedInventorySlot();
         pickupItems.clear();
-        pickupItems.addAll(initialSnapshot.createPickupItems());
+        pickupItems.addAll(snapshot.createPickupItems());
         goldPickups.clear();
-        goldPickups.addAll(initialSnapshot.createGoldPickups());
+        goldPickups.addAll(snapshot.createGoldPickups());
         bombs.clear();
         effectManager.clear();
         boss = createBoss();
+        SceneTransitionManager.setCurrentBossType(bossFightSnapshot.getBossType());
+        SceneTransitionManager.setBossFightSnapshotActive(true);
 
         phase2Triggered = false;
         phase3Triggered = false;
@@ -1232,6 +1262,11 @@ public class BossScene extends AnimationTimer {
         gc.setLineWidth(3);
         gc.strokeRect(bossExitDoor.getMinX(), bossExitDoor.getMinY(),
                       bossExitDoor.getWidth(), bossExitDoor.getHeight());
+        if (Collision.checkAABB(player.getHitbox(), inflate(bossExitDoor, 14))) {
+            gc.setFill(Color.WHITE);
+            gc.setFont(Font.font(14));
+            gc.fillText("Press W / Up / Enter", bossExitDoor.getMinX() - 46, bossExitDoor.getMinY() - 12);
+        }
     }
 
     /**
@@ -1360,16 +1395,46 @@ public class BossScene extends AnimationTimer {
         lines.add(String.format("FPS: %.0f", fps));
         lines.add(String.format("Player: %.1f, %.1f", player.getX(), player.getY()));
         lines.add(String.format("Velocity: %.1f, %.1f", player.getVelocityX(), player.getVelocityY()));
+        lines.add("GameState: " + SceneTransitionManager.getCurrentGameState());
+        lines.add("Transitioning: " + SceneTransitionManager.isTransitioning());
         lines.add("Stage: BOSS - " + boss.getDisplayName());
+        lines.add("Current level: " + SceneTransitionManager.getCurrentLevel());
+        lines.add("Boss type: " + SceneTransitionManager.getCurrentBossType());
+        lines.add("Boss fight: " + SceneTransitionManager.getBossFightState());
+        lines.add("Boss snapshot: " + SceneTransitionManager.hasBossFightSnapshot());
+        lines.add(String.format("Portal cooldown: %.2f", SceneTransitionManager.getPortalCooldown()));
+        lines.add("Active loops: " + SceneTransitionManager.getActiveGameLoopCount());
+        lines.add("Scene: " + SceneTransitionManager.getCurrentSceneName());
         lines.add("Enemy count: " + aliveMinions);
         lines.add("Boss alive: " + (boss.isAlive() && !boss.isDeathHandled()));
         lines.add("Boss death handled: " + boss.isDeathHandled());
         lines.add("Projectiles: " + countProjectiles());
         lines.add("Effects: " + effectManager.getActiveEffectCount());
+        lines.add("Inventory: " + debugInventorySlots());
         lines.add("Paused: " + flowController.isPaused());
         lines.add("Object count: " + (pickupItems.size() + goldPickups.size() + bombs.size()
             + aliveMinions + effectManager.getActiveEffectCount()));
         return lines;
+    }
+
+    private Rectangle2D inflate(Rectangle2D rect, double amount) {
+        return new Rectangle2D(rect.getMinX() - amount, rect.getMinY() - amount,
+            rect.getWidth() + amount * 2, rect.getHeight() + amount * 2);
+    }
+
+    private boolean isPortalEnterKey(KeyCode key) {
+        return key == KeyCode.W || key == KeyCode.UP || key == KeyCode.ENTER;
+    }
+
+    private String debugInventorySlots() {
+        List<String> slots = new ArrayList<>();
+        for (int i = 0; i < inventory.getCapacity(); i++) {
+            InventorySlot slot = inventory.getSlot(i);
+            slots.add(slot == null || slot.isEmpty()
+                ? "-"
+                : slot.getType().name() + "x" + slot.getCount());
+        }
+        return String.join(",", slots);
     }
 
     private int countProjectiles() {

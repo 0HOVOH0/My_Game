@@ -22,6 +22,6 @@ public class MainMenuController {
      */
     @FXML
     private void onExit() {
-        javafx.application.Platform.exit();
+        Main.quitGame();
     }
 }

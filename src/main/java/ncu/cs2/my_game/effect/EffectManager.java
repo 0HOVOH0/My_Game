@@ -15,16 +15,10 @@ import java.util.List;
 public class EffectManager {
     private final List<AnimatedEffect> effects = new ArrayList<>();
     private final Image slashImage;
-    private final FrameAnimation slashAnimation;
     private double slashCooldown;
 
     public EffectManager() {
-        slashAnimation = loadSlashAnimation();
-        slashImage = slashAnimation == null ? loadSlashImage() : null;
-        if (slashAnimation == null && slashImage != null) {
-            System.out.println("Warning: slash.gif may not have transparent background. Use PNG sequence for best result.");
-            System.out.println("Please replace slash.gif with transparent PNG sequence for correct rendering.");
-        }
+        slashImage = loadSlashImage();
     }
 
     public void update(double dt) {
@@ -46,9 +40,7 @@ public class EffectManager {
 
     public void playSlash(Player player) {
         if (slashCooldown > 0) return;
-        if (slashAnimation != null && !slashAnimation.isEmpty()) {
-            effects.add(AttackEffect.slash(slashAnimation, player));
-        } else if (slashImage != null && !slashImage.isError()) {
+        if (slashImage != null && !slashImage.isError()) {
             effects.add(AttackEffect.slash(slashImage, player));
         } else {
             return;
@@ -82,27 +74,5 @@ public class EffectManager {
             // Missing visual asset should not break combat.
         }
         return null;
-    }
-
-    private FrameAnimation loadSlashAnimation() {
-        List<Image> frames = new ArrayList<>();
-        for (int i = 1; i <= Config.SLASH_EFFECT_FRAME_COUNT; i++) {
-            String path = String.format(Config.SLASH_EFFECT_FRAME_PATTERN, i);
-            var stream = EffectManager.class.getResourceAsStream(path);
-            if (stream == null) {
-                frames.clear();
-                break;
-            }
-            Image image = new Image(stream);
-            if (image.isError()) {
-                frames.clear();
-                break;
-            }
-            frames.add(image);
-        }
-        if (frames.isEmpty()) return null;
-        System.out.println("[EffectManager] Loaded transparent slash PNG sequence: "
-            + frames.size() + " frames.");
-        return new FrameAnimation(frames, Config.SLASH_EFFECT_DURATION);
     }
 }
