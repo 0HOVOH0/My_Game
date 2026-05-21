@@ -244,7 +244,7 @@ public class Boss extends Entity {
         drawBody(gc);
         drawAttackBoxDebug(gc);
         drawHpBar(gc);
-        drawStateLabel(gc);
+        drawAlertIndicator(gc);
 
         // 繪製所有存活的投射物
         for (Fireball p : projectiles) {
@@ -318,6 +318,22 @@ public class Boss extends Entity {
                                        : Color.RED;
         gc.setFill(barColor);
         gc.fillRect(x, barY, width * ratio, barH);
+    }
+
+    private void drawAlertIndicator(GraphicsContext gc) {
+        if (fsm.getCurrentState() == ncu.cs2.my_game.fsm.BossState.IDLE
+            || fsm.getCurrentState() == ncu.cs2.my_game.fsm.BossState.DEAD) {
+            return;
+        }
+        double bob = Math.sin(System.nanoTime() / 120_000_000.0) * 2.0;
+        gc.setFont(javafx.scene.text.Font.font("Arial", javafx.scene.text.FontWeight.BOLD, 26));
+        double textX = x + width / 2.0 - 6.0;
+        double textY = y - 20.0 + bob;
+        gc.setStroke(Color.web("#5a3b00"));
+        gc.setLineWidth(3.0);
+        gc.strokeText("!", textX, textY);
+        gc.setFill(Color.GOLD);
+        gc.fillText("!", textX, textY);
     }
 
     /**

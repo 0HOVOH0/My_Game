@@ -94,6 +94,9 @@ public class BossScene extends AnimationTimer {
     /** Boss 身體接觸傷害的冷卻時間（秒） */
     private static final double BOSS_CONTACT_COOLDOWN = 0.8;
 
+    /** Boss 房生成牆與平台時保留至少一個玩家寬度的通行空間。 */
+    private static final double MIN_PASSAGE_WIDTH = Config.PLAYER_WIDTH + 10.0;
+
     // ── 欄位 ─────────────────────────────────────────────────────────────────
 
     /** 主視窗參考 */
@@ -156,6 +159,9 @@ public class BossScene extends AnimationTimer {
     private final Rectangle2D[] dashSurfaces;
 
     private final Rectangle2D[] navigationSurfaces;
+
+    /** 本次 Boss 關固定的 Boss 類型；死亡 rollback 不重新抽，避免復活後換 Boss。 */
+    private final BossType bossType;
 
     // ── 階段與視覺效果 ────────────────────────────────────────────────────────
 
@@ -239,24 +245,25 @@ public class BossScene extends AnimationTimer {
 
         // ── 三個閃躲用平台 ────────────────────────────────────────────────────
         platforms = new Rectangle2D[] {
-            new Rectangle2D( 24 + bossRand(-8, 14), 452 + bossRand(-6, 8), bossPlatformWidth(10, 12), PLAT_H),
-            new Rectangle2D(320 + bossRand(-16, 18), 452 + bossRand(-6, 8), bossPlatformWidth(10, 12), PLAT_H),
-            new Rectangle2D(595 + bossRand(-18, 12), 452 + bossRand(-6, 8), bossPlatformWidth(9, 11), PLAT_H),
-            new Rectangle2D(135 + bossRand(-12, 18), 326 + bossRand(-8, 10), bossPlatformWidth(8, 10), PLAT_H),
-            new Rectangle2D(505 + bossRand(-18, 12), 326 + bossRand(-8, 10), bossPlatformWidth(8, 10), PLAT_H),
-            new Rectangle2D(330 + bossRand(-18, 18), 202 + bossRand(-6, 8), bossPlatformWidth(8, 9), PLAT_H),
+            new Rectangle2D( 36 + bossRand(-8, 14), 452 + bossRand(-6, 8), bossPlatformWidth(7, 9), PLAT_H),
+            new Rectangle2D(330 + bossRand(-14, 16), 452 + bossRand(-6, 8), bossPlatformWidth(7, 9), PLAT_H),
+            new Rectangle2D(615 + bossRand(-12, 10), 452 + bossRand(-6, 8), bossPlatformWidth(6, 8), PLAT_H),
+            new Rectangle2D(150 + bossRand(-12, 18), 326 + bossRand(-8, 10), bossPlatformWidth(6, 8), PLAT_H),
+            new Rectangle2D(515 + bossRand(-16, 12), 326 + bossRand(-8, 10), bossPlatformWidth(6, 8), PLAT_H),
+            new Rectangle2D(335 + bossRand(-14, 14), 202 + bossRand(-6, 8), bossPlatformWidth(5, 7), PLAT_H),
         };
-        covers = new Rectangle2D[] {
-            new Rectangle2D(140 + bossRand(-12, 12), GROUND_Y - 76, 142, 76),
-            new Rectangle2D(335 + bossRand(-10, 12), GROUND_Y - 92, 154, 92),
-            new Rectangle2D(548 + bossRand(-12, 12), GROUND_Y - 78, 146, 78)
-        };
+        covers = createBossCovers(new Rectangle2D[] {
+            new Rectangle2D(150 + bossRand(-12, 12), GROUND_Y - 64, 104, 64),
+            new Rectangle2D(360 + bossRand(-10, 12), GROUND_Y - 76, 112, 76),
+            new Rectangle2D(590 + bossRand(-12, 12), GROUND_Y - 66, 104, 66)
+        });
         visionBlockers = mergeBlockers(platforms, covers);
         dashSurfaces = mergeBlockers(new Rectangle2D[] { ground }, visionBlockers);
         navigationSurfaces = dashSurfaces;
+        bossType = Main.rollBossType();
         boss = createBoss();
-        itemSpawnManager = new ItemSpawnManager(ground, platforms);
-        goldSpawnManager = new GoldSpawnManager(ground, platforms);
+        itemSpawnManager = new ItemSpawnManager(ground, platforms, covers);
+        goldSpawnManager = new GoldSpawnManager(ground, platforms, covers);
         inventoryOpen = false;
         selectedInventorySlot = 0;
 
@@ -372,7 +379,7 @@ public class BossScene extends AnimationTimer {
         resolvePlayerPlatformCollisions();
 
         // 4. Boss 地板碰撞解析（Boss 只與地板互動，不踩平台）
-        resolveBossGround();
+        resolveBossGround(dt);
 
         // 4.5 若玩家放開 S，且頭頂空間足夠，恢復站立
         tryResolvePlayerStandUp();
@@ -467,7 +474,7 @@ public class BossScene extends AnimationTimer {
      * 解析 Boss 與地板的碰撞。
      * Boss 只與地板互動（不踩平台），落地後清除垂直速度。
      */
-    private void resolveBossGround() {
+    private void resolveBossGround(double dt) {
         boolean bossOnSolid = false;
         for (Rectangle2D cover : covers) {
             int result = Collision.resolveSolid(boss, cover);
@@ -497,7 +504,11 @@ public class BossScene extends AnimationTimer {
             boolean minionOnSolid = false;
             for (Rectangle2D cover : covers) {
                 int result = Collision.resolveSolid(minion, cover);
-                if (result == -1) minionOnSolid = true;
+                if (result == -1) {
+                    minionOnSolid = true;
+                } else if (result == 1 || result == 2) {
+                    minion.recoverFromWall(result);
+                }
             }
             if (minionOnSolid) {
                 minion.setOnGround(true);
@@ -522,6 +533,7 @@ public class BossScene extends AnimationTimer {
             if (!minionOnPlatform) {
                 minion.setOnGround(false);
             }
+            minion.updateStuckRecovery(dt);
         }
     }
 
@@ -529,6 +541,7 @@ public class BossScene extends AnimationTimer {
         for (Enemy minion : boss.getMinions()) {
             if (minion.isAlive()) {
                 minion.setNavigationSurfaces(navigationSurfaces);
+                minion.setMovementBlockers(covers);
                 minion.updateAwareness(player, visionBlockers);
             }
         }
@@ -544,8 +557,7 @@ public class BossScene extends AnimationTimer {
     private Boss createBoss() {
         int stage = Math.max(1, Main.getStageNumber());
         int maxHp = (int) Math.round(Config.BOSS_MAX_HP * 1.25 * (1.0 + stage * 0.10));
-        BossType type = Main.rollBossType();
-        return switch (type) {
+        return switch (bossType) {
             case GROUND_SPIKE -> new GroundSpikeBoss(700, 340, player, maxHp, GROUND_Y, dashSurfaces);
             case SUMMONER -> new SummonerBoss(700, 340, player, maxHp, GROUND_Y, dashSurfaces);
             case FIREBALL -> new Boss(700, 340, player, maxHp);
@@ -559,6 +571,45 @@ public class BossScene extends AnimationTimer {
 
     private double bossRand(double min, double max) {
         return min + Math.random() * (max - min);
+    }
+
+    private Rectangle2D[] createBossCovers(Rectangle2D[] candidates) {
+        List<Rectangle2D> accepted = new ArrayList<>();
+        for (Rectangle2D cover : candidates) {
+            if (isBossCoverPlacementValid(cover, accepted)) {
+                accepted.add(cover);
+            }
+        }
+        return accepted.toArray(Rectangle2D[]::new);
+    }
+
+    private boolean isBossCoverPlacementValid(Rectangle2D cover, List<Rectangle2D> accepted) {
+        for (Rectangle2D platform : platforms) {
+            double gap = horizontalGap(cover, platform);
+            if (gap > 0 && gap < MIN_PASSAGE_WIDTH && verticalRangesOverlap(cover, platform, Config.PLAYER_HEIGHT)) {
+                return false;
+            }
+            if (cover.intersects(platform)) {
+                return false;
+            }
+        }
+        for (Rectangle2D other : accepted) {
+            double gap = horizontalGap(cover, other);
+            if (gap > 0 && gap < MIN_PASSAGE_WIDTH && verticalRangesOverlap(cover, other, Config.PLAYER_HEIGHT)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private double horizontalGap(Rectangle2D a, Rectangle2D b) {
+        if (a.getMaxX() <= b.getMinX()) return b.getMinX() - a.getMaxX();
+        if (b.getMaxX() <= a.getMinX()) return a.getMinX() - b.getMaxX();
+        return -1.0;
+    }
+
+    private boolean verticalRangesOverlap(Rectangle2D a, Rectangle2D b, double padding) {
+        return a.getMaxY() + padding > b.getMinY() && b.getMaxY() + padding > a.getMinY();
     }
 
     private Rectangle2D createBossExitDoor() {
@@ -708,17 +759,25 @@ public class BossScene extends AnimationTimer {
         for (Fireball fireball : player.getFireballs()) {
             if (!fireball.isAlive()) continue;
 
-            if (boss.isAlive() && Collision.checkAABB(fireball.getHitbox(), boss.getHitbox())) {
+            if (boss.isAlive() && fireball.canHitTarget(boss)
+                && Collision.checkAABB(fireball.getHitbox(), boss.getHitbox())) {
                 boss.takeDamage(fireball.getDamage());
-                fireball.destroy();
-                continue;
+                fireball.markTargetHit(boss);
+                if (!fireball.isPiercingEnemies()) {
+                    fireball.destroy();
+                    continue;
+                }
             }
 
             for (Enemy minion : boss.getMinions()) {
-                if (minion.isAlive() && Collision.checkAABB(fireball.getHitbox(), minion.getHitbox())) {
+                if (minion.isAlive() && fireball.canHitTarget(minion)
+                    && Collision.checkAABB(fireball.getHitbox(), minion.getHitbox())) {
                     minion.takeDamage(fireball.getDamage());
-                    fireball.destroy();
-                    break;
+                    fireball.markTargetHit(minion);
+                    if (!fireball.isPiercingEnemies()) {
+                        fireball.destroy();
+                        break;
+                    }
                 }
             }
             if (!fireball.isAlive()) continue;
@@ -738,10 +797,12 @@ public class BossScene extends AnimationTimer {
             return;
         }
 
-        for (Rectangle2D platform : platforms) {
-            if (Collision.checkAABB(fireball.getHitbox(), platform)) {
-                fireball.destroy();
-                return;
+        if (!fireball.isPiercingEnemies()) {
+            for (Rectangle2D platform : platforms) {
+                if (Collision.checkAABB(fireball.getHitbox(), platform)) {
+                    fireball.destroy();
+                    return;
+                }
             }
         }
         for (Rectangle2D cover : covers) {
@@ -791,9 +852,11 @@ public class BossScene extends AnimationTimer {
     private boolean isFireballTouchingWall(Fireball fireball) {
         if (Collision.checkAABB(fireball.getHitbox(), ground)) return true;
 
-        for (Rectangle2D platform : platforms) {
-            if (Collision.checkAABB(fireball.getHitbox(), platform)) {
-                return true;
+        if (!fireball.isPiercingEnemies()) {
+            for (Rectangle2D platform : platforms) {
+                if (Collision.checkAABB(fireball.getHitbox(), platform)) {
+                    return true;
+                }
             }
         }
         for (Rectangle2D cover : covers) {
@@ -853,9 +916,7 @@ public class BossScene extends AnimationTimer {
     private void checkBossMinionsVsPlayer() {
         for (Enemy minion : boss.getMinions()) {
             if (!minion.isAlive()) continue;
-            if (Collision.checkAABB(minion.getHitbox(), player.getHitbox())) {
-                minion.tryDamagePlayer(player);
-            }
+            minion.tryDamagePlayer(player);
         }
     }
 
@@ -879,17 +940,17 @@ public class BossScene extends AnimationTimer {
     private void checkPlayerIceProjectilesVsBoss() {
         for (IceProjectile projectile : player.getIceProjectiles()) {
             if (!projectile.isAlive()) continue;
-            if (boss.isAlive() && Collision.checkAABB(projectile.getHitbox(), boss.getHitbox())) {
+            if (boss.isAlive() && projectile.canHitTarget(boss)
+                && Collision.checkAABB(projectile.getHitbox(), boss.getHitbox())) {
                 boss.applySlow(IceProjectile.BOSS_SLOW_DURATION, IceProjectile.BOSS_SLOW_MULTIPLIER);
-                projectile.destroy();
-                continue;
+                projectile.markTargetHit(boss);
             }
 
             for (Enemy minion : boss.getMinions()) {
-                if (minion.isAlive() && Collision.checkAABB(projectile.getHitbox(), minion.getHitbox())) {
+                if (minion.isAlive() && projectile.canHitTarget(minion)
+                    && Collision.checkAABB(projectile.getHitbox(), minion.getHitbox())) {
                     minion.applySlow(IceProjectile.SLOW_DURATION, IceProjectile.SLOW_MULTIPLIER);
-                    projectile.destroy();
-                    break;
+                    projectile.markTargetHit(minion);
                 }
             }
             if (projectile.isAlive()) destroyFireballOnWall(projectile);
@@ -927,7 +988,7 @@ public class BossScene extends AnimationTimer {
 
     private void updateBombs(double dt) {
         for (BombEntity bomb : bombs) {
-            bomb.update(dt);
+            bomb.update(dt, ground, platforms, covers);
             if (bomb.shouldApplyDamage()) {
                 applyBombDamage(bomb);
                 bomb.markDamageApplied();

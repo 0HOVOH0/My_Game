@@ -33,6 +33,7 @@ import ncu.cs2.my_game.state.EnemySnapshot;
 import ncu.cs2.my_game.state.StageSnapshot;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 
@@ -81,6 +82,12 @@ public class Level2Scene extends AnimationTimer {
 
     /** 加血道具回復的血量 */
     private static final int ITEM_HEAL = 30;
+
+    /** 生成平台/牆壁時保留的最小通行寬度，避免玩家或小兵被夾在窄縫。 */
+    private static final double MIN_PASSAGE_WIDTH = Config.PLAYER_WIDTH + 10.0;
+
+    /** 小兵出生前必須具備的有效巡邏寬度。 */
+    private static final double MIN_ENEMY_PATROL_WIDTH = Enemy.ENEMY_W + Config.PLAYER_WIDTH + 48.0;
 
     // ── 欄位 ─────────────────────────────────────────────────────────────────
 
@@ -182,6 +189,7 @@ public class Level2Scene extends AnimationTimer {
     public Level2Scene(Stage stage, StageDefinition stageDefinition) {
         this.stage = stage;
         this.stageDefinition = stageDefinition;
+        random = new Random();
 
         // ── 建立 Canvas 與 JavaFX Scene ──────────────────────────────────────
         Canvas canvas = new Canvas(Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
@@ -219,16 +227,15 @@ public class Level2Scene extends AnimationTimer {
         bombs = new ArrayList<>();
         inventory = Main.getInventory();
         enemyDropsHandled = new boolean[enemies.length];
-        random = new Random();
-        itemSpawnManager = new ItemSpawnManager(ground, platforms);
-        goldSpawnManager = new GoldSpawnManager(ground, platforms);
+        itemSpawnManager = new ItemSpawnManager(ground, platforms, covers);
+        goldSpawnManager = new GoldSpawnManager(ground, platforms, covers);
         inventoryOpen = false;
         selectedInventorySlot = 0;
 
         // 示範地板道具：玩家碰到後進背包，按 U/I/O 使用
-        double[] startPotion = pickupPoint(0, 0.55);
-        double[] fireScroll = pickupPoint(2, 0.45);
-        double[] bomb = pickupPoint(7, 0.28);
+        double[] startPotion = randomPickupPoint(0, Math.min(3, platforms.length - 1));
+        double[] fireScroll = randomPickupPoint(2, Math.min(7, platforms.length - 1));
+        double[] bomb = randomPickupPoint(5, platforms.length - 1);
         addPickup(PickupType.SMALL_POTION, startPotion[0], startPotion[1]);
         addPickup(PickupType.FIRE_SCROLL, fireScroll[0], fireScroll[1]);
         addPickup(PickupType.BOMB, bomb[0], bomb[1]);
@@ -236,7 +243,7 @@ public class Level2Scene extends AnimationTimer {
 
         // ── 加血道具（放在 P3 中央偏右，玩家進到 P3 後容易看到）───────────────
         // P3 頂面 y=355，道具底部對齊平台：item.y = 355 - ITEM_SIZE = 335
-        double[] healthPoint = pickupPoint(2, 0.72);
+        double[] healthPoint = randomPickupPoint(1, Math.min(6, platforms.length - 1));
         healthItem = new Rectangle2D(healthPoint[0], healthPoint[1], ITEM_SIZE, ITEM_SIZE);
 
         initialSnapshot = new StageSnapshot(
@@ -325,6 +332,7 @@ public class Level2Scene extends AnimationTimer {
         for (Enemy enemy : enemies) {
             if (enemy.isAlive()) {
                 enemy.setNavigationSurfaces(navigationSurfaces);
+                enemy.setMovementBlockers(covers);
                 enemy.updateAwareness(player, visionBlockers);
             }
             enemy.update(dt);
@@ -334,7 +342,7 @@ public class Level2Scene extends AnimationTimer {
         resolvePlayerPlatformCollisions();
 
         // 4. 每個存活敵人的平台碰撞解析
-        resolveEnemyPlatformCollisions();
+        resolveEnemyPlatformCollisions(dt);
 
         // 4.5 若玩家放開 S，且頭頂空間足夠，恢復站立
         tryResolvePlayerStandUp();
@@ -423,25 +431,53 @@ public class Level2Scene extends AnimationTimer {
         double speedScale = Math.min(1.35, 1.0 + stageDefinition.getDifficulty() * 0.025);
         double projectileScale = Math.min(1.35, 1.0 + stageDefinition.getDifficulty() * 0.025);
 
-        addEnemyOnPlatform(snapshots, 1, 0.45, false, hpScale, damageScale, speedScale, projectileScale);
-        addEnemyOnPlatform(snapshots, 4, 0.45, true, hpScale, damageScale, speedScale, projectileScale);
-        addEnemyOnPlatform(snapshots, 6, 0.45, false, hpScale, damageScale, speedScale, projectileScale);
-        addEnemyOnPlatform(snapshots, 8, 0.42, false, hpScale, damageScale, speedScale, projectileScale);
-        addEnemyOnPlatform(snapshots, 9, 0.45, true, hpScale, damageScale, speedScale, projectileScale);
-        addEnemyOnPlatform(snapshots, 10, 0.45, false, hpScale, damageScale, speedScale, projectileScale);
-        addEnemyOnPlatform(snapshots, 11, 0.48,
-            stageDefinition.getDifficulty() % 2 == 0, hpScale, damageScale, speedScale, projectileScale);
-
-        if (stageDefinition.getDifficulty() >= 4) {
-            addEnemyOnPlatform(snapshots, 12, 0.5, true, hpScale, damageScale, speedScale, projectileScale);
+        List<Integer> candidates = new ArrayList<>();
+        for (int i = 1; i < platforms.length; i++) {
+            Rectangle2D patrolSegment = safeEnemyPatrolSegment(platforms[i]);
+            if (patrolSegment != null && patrolSegment.getWidth() >= MIN_ENEMY_PATROL_WIDTH) {
+                candidates.add(i);
+            }
         }
+        Collections.shuffle(candidates, random);
+
+        int enemyCount = switch (stageDefinition.getType()) {
+            case ELITE -> 8;
+            case COMBAT -> 7;
+            case PLATFORM -> 6;
+            case EXPLORATION -> 5;
+            case SHOP, BOSS -> 6;
+        };
+        enemyCount += Math.min(3, stageDefinition.getDifficulty() / 4);
+        enemyCount = Math.min(enemyCount, candidates.size());
+
+        for (int i = 0; i < enemyCount; i++) {
+            boolean ranged = random.nextDouble() < rangedChance(i);
+            double ratio = 0.18 + random.nextDouble() * 0.64;
+            addEnemyOnPlatform(snapshots, candidates.get(i), ratio, ranged,
+                hpScale, damageScale, speedScale, projectileScale);
+        }
+
         if (stageDefinition.getDifficulty() >= 8) {
-            snapshots.add(new EnemySnapshot(900, GROUND_Y - Enemy.ENEMY_H, 780, 980,
+            double leftGround = 720 + random.nextDouble() * 240;
+            double rightGround = 1130 + random.nextDouble() * 220;
+            snapshots.add(new EnemySnapshot(leftGround, GROUND_Y - Enemy.ENEMY_H, leftGround - 110, leftGround + 140,
                 false, hpScale, damageScale, speedScale, projectileScale));
-            snapshots.add(new EnemySnapshot(1280, GROUND_Y - Enemy.ENEMY_H, 1160, 1420,
+            snapshots.add(new EnemySnapshot(rightGround, GROUND_Y - Enemy.ENEMY_H, rightGround - 110, rightGround + 160,
                 true, hpScale, damageScale, speedScale, projectileScale));
         }
         return snapshots;
+    }
+
+    private double rangedChance(int enemyIndex) {
+        double chance = switch (stageDefinition.getType()) {
+            case ELITE -> 0.42;
+            case COMBAT -> 0.30;
+            case PLATFORM -> 0.26;
+            case EXPLORATION -> 0.22;
+            case SHOP, BOSS -> 0.25;
+        };
+        if (enemyIndex == 0) chance *= 0.5;
+        return chance;
     }
 
     private void addEnemyOnPlatform(List<EnemySnapshot> snapshots, int platformIndex, double ratio,
@@ -449,37 +485,132 @@ public class Level2Scene extends AnimationTimer {
                                     double speedScale, double projectileScale) {
         if (platformIndex < 0 || platformIndex >= platforms.length) return;
         Rectangle2D p = platforms[platformIndex];
-        double patrolLeft = p.getMinX();
-        double patrolRight = Math.max(patrolLeft + Enemy.ENEMY_W + 8, p.getMaxX());
-        double x = patrolLeft + Math.max(6.0, (p.getWidth() - Enemy.ENEMY_W) * ratio);
+        Rectangle2D segment = safeEnemyPatrolSegment(p);
+        if (segment == null || segment.getWidth() < MIN_ENEMY_PATROL_WIDTH) return;
+        double patrolLeft = segment.getMinX();
+        double patrolRight = Math.max(patrolLeft + Enemy.ENEMY_W + 8, segment.getMaxX());
+        double x = patrolLeft + Math.max(6.0, (segment.getWidth() - Enemy.ENEMY_W) * ratio);
         x = Math.min(x, patrolRight - Enemy.ENEMY_W);
         snapshots.add(new EnemySnapshot(x, p.getMinY() - Enemy.ENEMY_H,
             patrolLeft, patrolRight, ranged, hpScale, damageScale, speedScale, projectileScale));
+    }
+
+    private Rectangle2D safeEnemyPatrolSegment(Rectangle2D platform) {
+        List<double[]> segments = new ArrayList<>();
+        segments.add(new double[] { platform.getMinX() + 8.0, platform.getMaxX() - 8.0 });
+
+        for (Rectangle2D cover : covers) {
+            boolean restsOnPlatform = Math.abs(cover.getMaxY() - platform.getMinY()) <= 1.5;
+            boolean overlapsX = cover.getMaxX() > platform.getMinX() && cover.getMinX() < platform.getMaxX();
+            if (!restsOnPlatform || !overlapsX) continue;
+
+            double blockLeft = Math.max(platform.getMinX(), cover.getMinX() - 18.0);
+            double blockRight = Math.min(platform.getMaxX(), cover.getMaxX() + 18.0);
+            List<double[]> split = new ArrayList<>();
+            for (double[] segment : segments) {
+                if (blockRight <= segment[0] || blockLeft >= segment[1]) {
+                    split.add(segment);
+                    continue;
+                }
+                if (blockLeft - segment[0] >= Enemy.ENEMY_W + 24.0) {
+                    split.add(new double[] { segment[0], blockLeft });
+                }
+                if (segment[1] - blockRight >= Enemy.ENEMY_W + 24.0) {
+                    split.add(new double[] { blockRight, segment[1] });
+                }
+            }
+            segments = split;
+        }
+
+        double[] best = null;
+        for (double[] segment : segments) {
+            double width = segment[1] - segment[0];
+            if (width < Enemy.ENEMY_W + 24.0) continue;
+            if (best == null || width > best[1] - best[0]) {
+                best = segment;
+            }
+        }
+        if (best == null) {
+            return null;
+        }
+        return new Rectangle2D(best[0], platform.getMinY(), best[1] - best[0], platform.getHeight());
     }
 
     private Rectangle2D[] createProceduralPlatforms() {
         boolean complex = stageDefinition.getDifficulty() >= 5
             || stageDefinition.getType() == StageType.PLATFORM;
         double upperJitter = complex ? 22.0 : 12.0;
-        return new Rectangle2D[] {
-            new Rectangle2D(20 + rand(-8, 18), 500 + rand(-8, 8), platformWidth(5, 7), PLAT_H),
-            new Rectangle2D(210 + rand(-25, 28), 430 + rand(-12, 14), platformWidth(4, 7), PLAT_H),
-            new Rectangle2D(410 + rand(-28, 34), 355 + rand(-14, 14), platformWidth(4, 7), PLAT_H),
-            new Rectangle2D(570 + rand(-18, 32), 440 + rand(-12, 14), platformWidth(4, 8), PLAT_H),
-            new Rectangle2D(225 + rand(-28, 28), 275 + rand(-upperJitter, upperJitter), platformWidth(4, 8), PLAT_H),
-            new Rectangle2D(50 + rand(-20, 26), 200 + rand(-upperJitter, upperJitter), platformWidth(4, 7), PLAT_H),
-            new Rectangle2D(275 + rand(-28, 34), 165 + rand(-16, 18), platformWidth(4, 8), PLAT_H),
-            new Rectangle2D(520 + rand(-20, 30), 150 + rand(-10, 16), platformWidth(7, 10), PLAT_H),
-            new Rectangle2D(810 + rand(-32, 36), 480 + rand(-12, 12), platformWidth(5, 9), PLAT_H),
-            new Rectangle2D(1000 + rand(-35, 38), 395 + rand(-18, 18), platformWidth(4, 8), PLAT_H),
-            new Rectangle2D(1185 + rand(-35, 42), 310 + rand(-20, 20), platformWidth(5, 9), PLAT_H),
-            new Rectangle2D(1360 + rand(-38, 35), 225 + rand(-22, 22), platformWidth(5, 9), PLAT_H),
-            new Rectangle2D(1420 + rand(-28, 30), 150 + rand(-12, 18), platformWidth(5, 8), PLAT_H),
-        };
+        List<Rectangle2D> generated = new ArrayList<>();
+        addRandomPlatform(generated, 12, 78, 488, 516, 5, 8);
+        addRandomPlatform(generated, 170, 285, 405, 460, 4, 8);
+        addRandomPlatform(generated, 345, 480, 330, 385, 4, 8);
+        addRandomPlatform(generated, 520, 660, 410, 472, 4, 9);
+        addRandomPlatform(generated, 170, 330, 245 - upperJitter, 300 + upperJitter, 4, 9);
+        addRandomPlatform(generated, 35, 160, 178 - upperJitter, 230 + upperJitter, 3, 8);
+        addRandomPlatform(generated, 240, 390, 142, 205, 4, 9);
+        addRandomPlatform(generated, 465, 645, 128, 182, 6, 10);
+        addRandomPlatform(generated, 760, 905, 450, 505, 5, 9);
+        addRandomPlatform(generated, 760, 900, 210, 285, 4, 8);
+        addRandomPlatform(generated, 940, 1095, 360, 430, 4, 8);
+        addRandomPlatform(generated, 940, 1100, 120, 205, 4, 8);
+        addRandomPlatform(generated, 1120, 1280, 270, 340, 5, 9);
+        addRandomPlatform(generated, 1180, 1325, 440, 505, 4, 8);
+        addRandomPlatform(generated, 1290, 1455, 195, 265, 5, 9);
+        addRandomPlatform(generated, 1365, 1510, 125, 180, 4, 8);
+        if (stageDefinition.getDifficulty() >= 5) {
+            addRandomPlatform(generated, 700, 840, 300, 360, 4, 8);
+            addRandomPlatform(generated, 1030, 1175, 215, 285, 4, 8);
+        }
+        if (stageDefinition.getDifficulty() >= 9 || stageDefinition.getType() == StageType.ELITE) {
+            addRandomPlatform(generated, 885, 1015, 140, 190, 3, 6);
+        }
+        return generated.toArray(Rectangle2D[]::new);
     }
 
     private double rand(double min, double max) {
-        return min + Math.random() * (max - min);
+        return min + random.nextDouble() * (max - min);
+    }
+
+    private Rectangle2D randomPlatform(double minX, double maxX, double minY, double maxY,
+                                       int minTiles, int maxTiles) {
+        double width = platformWidth(minTiles, maxTiles);
+        double x = rand(minX, Math.max(minX, maxX - width));
+        double y = rand(minY, maxY);
+        return new Rectangle2D(x, y, width, PLAT_H);
+    }
+
+    private void addRandomPlatform(List<Rectangle2D> generated, double minX, double maxX,
+                                   double minY, double maxY, int minTiles, int maxTiles) {
+        Rectangle2D fallback = null;
+        for (int attempt = 0; attempt < 12; attempt++) {
+            Rectangle2D candidate = randomPlatform(minX, maxX, minY, maxY, minTiles, maxTiles);
+            if (fallback == null) fallback = candidate;
+            if (isPlatformPlacementValid(candidate, generated)) {
+                generated.add(candidate);
+                return;
+            }
+        }
+        generated.add(fallback);
+    }
+
+    private boolean isPlatformPlacementValid(Rectangle2D candidate, List<Rectangle2D> existing) {
+        for (Rectangle2D platform : existing) {
+            double verticalGap = Math.abs(candidate.getMinY() - platform.getMinY());
+            double horizontalGap = Math.max(candidate.getMinX(), platform.getMinX())
+                - Math.min(candidate.getMaxX(), platform.getMaxX());
+            if (horizontalGap > 0 && horizontalGap < MIN_PASSAGE_WIDTH && verticalGap < 170.0) {
+                return false;
+            }
+            if (verticalGap < 34.0 && horizontalGap < 44.0) {
+                return false;
+            }
+            Rectangle2D padded = new Rectangle2D(platform.getMinX() - 10, platform.getMinY() - 8,
+                platform.getWidth() + 20, platform.getHeight() + 16);
+            if (candidate.intersects(padded) && verticalGap < 70.0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private double platformWidth(int minTiles, int maxTiles) {
@@ -489,27 +620,78 @@ public class Level2Scene extends AnimationTimer {
 
         int min = Math.max(2, minTiles);
         int max = Math.max(min, maxTiles + bonus);
-        int tiles = min + (int) (Math.random() * (max - min + 1));
+        int tiles = min + random.nextInt(max - min + 1);
         return tiles * 24.0;
     }
 
     private Rectangle2D[] createCoverWalls() {
-        double heightJitter = Math.random() * 18.0;
-        return new Rectangle2D[] {
-            new Rectangle2D(315 + rand(-35, 38), GROUND_Y - 108 - heightJitter, 72 + rand(0, 50), 108 + heightJitter),
-            new Rectangle2D(660 + rand(-42, 42), GROUND_Y - 78, 88 + rand(0, 58), 78),
-            new Rectangle2D(900 + rand(-38, 45), GROUND_Y - 128, 68 + rand(0, 54), 128),
-            anchoredCover(9, 0.66, 64 + rand(0, 42), 58 + rand(0, 28)),
-            new Rectangle2D(1250 + rand(-35, 42), GROUND_Y - 96, 112 + rand(0, 58), 96),
-            new Rectangle2D(1460 + rand(-30, 34), GROUND_Y - 112, 84 + rand(0, 50), 112)
-        };
+        double heightJitter = random.nextDouble() * 18.0;
+        double lateBonus = Math.min(52.0, stageDefinition.getDifficulty() * 4.0);
+        List<Rectangle2D> generated = new ArrayList<>();
+        addCoverIfValid(generated, new Rectangle2D(315 + rand(-35, 38), GROUND_Y - 106 - heightJitter, 64 + rand(0, 38), 106 + heightJitter));
+        addCoverIfValid(generated, new Rectangle2D(660 + rand(-42, 42), GROUND_Y - 76, 76 + rand(0, 42), 76));
+        addCoverIfValid(generated, new Rectangle2D(900 + rand(-38, 45), GROUND_Y - 118 - lateBonus * 0.65, 58 + rand(0, 42), 118 + lateBonus * 0.65));
+        addCoverIfValid(generated, anchoredCover(9, 0.66, 64 + rand(0, 42), 68 + rand(0, 32)));
+        addCoverIfValid(generated, new Rectangle2D(1215 + rand(-30, 35), GROUND_Y - 86 - lateBonus * 0.25, 82 + rand(0, 34), 86 + lateBonus * 0.25));
+        if (stageDefinition.getDifficulty() >= 5) {
+            addCoverIfValid(generated, new Rectangle2D(720 + rand(-32, 32), 0, 42 + rand(0, 24), 130 + rand(0, 54)));
+            addCoverIfValid(generated, new Rectangle2D(1130 + rand(-28, 36), 0, 38 + rand(0, 26), 150 + rand(0, 62)));
+        }
+        return generated.toArray(Rectangle2D[]::new);
     }
 
     private Rectangle2D anchoredCover(int platformIndex, double ratio, double width, double height) {
         Rectangle2D p = platforms[Math.max(0, Math.min(platformIndex, platforms.length - 1))];
-        double x = p.getMinX() + p.getWidth() * ratio - width / 2.0;
-        x = Math.max(p.getMinX(), Math.min(x, p.getMaxX() - width));
-        return new Rectangle2D(x, p.getMinY() - height, width, height);
+        double maxWidth = Math.max(28.0, p.getWidth() - MIN_PASSAGE_WIDTH * 2.0);
+        maxWidth = Math.min(maxWidth, p.getWidth() * 0.46);
+        double safeWidth = Math.min(width, maxWidth);
+        double margin = Math.min(MIN_PASSAGE_WIDTH, Math.max(14.0, p.getWidth() * 0.18));
+        double x = p.getMinX() + p.getWidth() * ratio - safeWidth / 2.0;
+        double minX = p.getMinX() + margin;
+        double maxX = p.getMaxX() - margin - safeWidth;
+        if (maxX < minX) {
+            minX = p.getMinX();
+            maxX = p.getMaxX() - safeWidth;
+        }
+        x = Math.max(minX, Math.min(x, maxX));
+        return new Rectangle2D(x, p.getMinY() - height, safeWidth, height);
+    }
+
+    private void addCoverIfValid(List<Rectangle2D> generated, Rectangle2D cover) {
+        if (isCoverPlacementValid(cover, generated)) {
+            generated.add(cover);
+        }
+    }
+
+    private boolean isCoverPlacementValid(Rectangle2D cover, List<Rectangle2D> existingCovers) {
+        for (Rectangle2D platform : platforms) {
+            boolean restsOnPlatform = Math.abs(cover.getMaxY() - platform.getMinY()) <= 1.5;
+            boolean intersectsPlatform = cover.intersects(platform);
+            if (intersectsPlatform && !restsOnPlatform) {
+                return false;
+            }
+            double gap = horizontalGap(cover, platform);
+            if (gap > 0 && gap < MIN_PASSAGE_WIDTH && verticalRangesOverlap(cover, platform, Config.PLAYER_HEIGHT)) {
+                return false;
+            }
+        }
+        for (Rectangle2D existing : existingCovers) {
+            double gap = horizontalGap(cover, existing);
+            if (gap > 0 && gap < MIN_PASSAGE_WIDTH && verticalRangesOverlap(cover, existing, Config.PLAYER_HEIGHT)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private double horizontalGap(Rectangle2D a, Rectangle2D b) {
+        if (a.getMaxX() <= b.getMinX()) return b.getMinX() - a.getMaxX();
+        if (b.getMaxX() <= a.getMinX()) return a.getMinX() - b.getMaxX();
+        return -1.0;
+    }
+
+    private boolean verticalRangesOverlap(Rectangle2D a, Rectangle2D b, double padding) {
+        return a.getMaxY() + padding > b.getMinY() && b.getMaxY() + padding > a.getMinY();
     }
 
     private Rectangle2D[] mergeBlockers(Rectangle2D[] first, Rectangle2D[] second) {
@@ -608,7 +790,7 @@ public class Level2Scene extends AnimationTimer {
      * 解析所有存活敵人與地板、平台的碰撞。
      * 每個敵人獨立解析，互不干擾。
      */
-    private void resolveEnemyPlatformCollisions() {
+    private void resolveEnemyPlatformCollisions(double dt) {
         for (Enemy enemy : enemies) {
             if (!enemy.isAlive()) continue;
 
@@ -617,6 +799,8 @@ public class Level2Scene extends AnimationTimer {
                 int result = Collision.resolveSolid(enemy, cover);
                 if (result == -1) {
                     groundedOnSolid = true;
+                } else if (result == 1 || result == 2) {
+                    enemy.recoverFromWall(result);
                 }
             }
             if (groundedOnSolid) {
@@ -646,6 +830,7 @@ public class Level2Scene extends AnimationTimer {
 
             // 沒踩到任何表面
             if (!landed) enemy.setOnGround(false);
+            enemy.updateStuckRecovery(dt);
         }
     }
 
@@ -701,11 +886,13 @@ public class Level2Scene extends AnimationTimer {
             boolean consumed = false;
             for (Enemy enemy : enemies) {
                 if (!enemy.isAlive()) continue;
-                if (Collision.checkAABB(fireball.getHitbox(), enemy.getHitbox())) {
+                if (fireball.canHitTarget(enemy)
+                    && Collision.checkAABB(fireball.getHitbox(), enemy.getHitbox())) {
                     enemy.takeDamage(fireball.getDamage());
-                    fireball.destroy();
+                    fireball.markTargetHit(enemy);
+                    if (!fireball.isPiercingEnemies()) fireball.destroy();
                     consumed = true;
-                    break;
+                    if (!fireball.isPiercingEnemies()) break;
                 }
             }
 
@@ -726,10 +913,12 @@ public class Level2Scene extends AnimationTimer {
             return;
         }
 
-        for (Rectangle2D platform : platforms) {
-            if (Collision.checkAABB(fireball.getHitbox(), platform)) {
-                fireball.destroy();
-                return;
+        if (!fireball.isPiercingEnemies()) {
+            for (Rectangle2D platform : platforms) {
+                if (Collision.checkAABB(fireball.getHitbox(), platform)) {
+                    fireball.destroy();
+                    return;
+                }
             }
         }
 
@@ -749,10 +938,7 @@ public class Level2Scene extends AnimationTimer {
     private void checkEnemyContactVsPlayer() {
         for (Enemy enemy : enemies) {
             if (!enemy.isAlive()) continue;
-            if (Collision.checkAABB(enemy.getHitbox(), player.getHitbox())) {
-                // 嘗試接觸傷害（冷卻中則無效果）
-                enemy.tryDamagePlayer(player);
-            }
+            enemy.tryDamagePlayer(player);
         }
     }
 
@@ -800,15 +986,6 @@ public class Level2Scene extends AnimationTimer {
     }
 
     private void addExplorationSupplies() {
-        double[][] supplyPoints = {
-            pickupPoint(0, 0.72),
-            pickupPoint(3, 0.45),
-            pickupPoint(5, 0.35),
-            pickupPoint(7, 0.65),
-            pickupPoint(9, 0.48),
-            pickupPoint(10, 0.55),
-            pickupPoint(11, 0.58)
-        };
         PickupType[] supplyTypes = {
             PickupType.SMALL_POTION,
             PickupType.BOMB,
@@ -819,14 +996,32 @@ public class Level2Scene extends AnimationTimer {
             PickupType.FIRE_SCROLL
         };
 
-        int count = Math.min(stageDefinition.getExplorationSupplyCount() + 2, supplyPoints.length);
-        for (int i = 0; i < count; i++) {
-            if (i % 2 == 0 || stageDefinition.getType() == StageType.EXPLORATION) {
-                addPickup(supplyTypes[i], supplyPoints[i][0], supplyPoints[i][1]);
-            } else {
-                addGold(3 + random.nextInt(8), supplyPoints[i][0], supplyPoints[i][1]);
+        List<Integer> supplyPlatforms = new ArrayList<>();
+        for (int i = 0; i < platforms.length; i++) {
+            if (platforms[i].getWidth() >= PickupItem.SIZE + 24) {
+                supplyPlatforms.add(i);
             }
         }
+        Collections.shuffle(supplyPlatforms, random);
+
+        int count = Math.min(stageDefinition.getExplorationSupplyCount() + 2, supplyPlatforms.size());
+        for (int i = 0; i < count; i++) {
+            double[] point = pickupPoint(supplyPlatforms.get(i),
+                0.18 + random.nextDouble() * 0.64);
+            PickupType type = supplyTypes[random.nextInt(supplyTypes.length)];
+            if (i % 2 == 0 || stageDefinition.getType() == StageType.EXPLORATION) {
+                addPickup(type, point[0], point[1]);
+            } else {
+                addGold(3 + random.nextInt(8), point[0], point[1]);
+            }
+        }
+    }
+
+    private double[] randomPickupPoint(int minPlatformIndex, int maxPlatformIndex) {
+        int min = Math.max(0, Math.min(minPlatformIndex, platforms.length - 1));
+        int max = Math.max(min, Math.min(maxPlatformIndex, platforms.length - 1));
+        return pickupPoint(min + random.nextInt(max - min + 1),
+            0.18 + random.nextDouble() * 0.64);
     }
 
     private double[] pickupPoint(int platformIndex, double ratio) {
@@ -841,10 +1036,10 @@ public class Level2Scene extends AnimationTimer {
             if (!projectile.isAlive()) continue;
             for (Enemy enemy : enemies) {
                 if (!enemy.isAlive()) continue;
-                if (Collision.checkAABB(projectile.getHitbox(), enemy.getHitbox())) {
+                if (projectile.canHitTarget(enemy)
+                    && Collision.checkAABB(projectile.getHitbox(), enemy.getHitbox())) {
                     enemy.applySlow(IceProjectile.SLOW_DURATION, IceProjectile.SLOW_MULTIPLIER);
-                    projectile.destroy();
-                    break;
+                    projectile.markTargetHit(enemy);
                 }
             }
             if (projectile.isAlive()) destroyFireballOnWall(projectile);
@@ -894,7 +1089,7 @@ public class Level2Scene extends AnimationTimer {
 
     private void updateBombs(double dt) {
         for (BombEntity bomb : bombs) {
-            bomb.update(dt);
+            bomb.update(dt, ground, platforms, covers);
             if (bomb.shouldApplyDamage()) {
                 applyBombDamage(bomb);
                 bomb.markDamageApplied();

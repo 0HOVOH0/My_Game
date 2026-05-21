@@ -32,8 +32,10 @@ public class UseContext {
 
     public void placeBomb() {
         if (bombs == null) return;
+        double dir = player.isFacingRight() ? 1.0 : -1.0;
         bombs.add(new BombEntity(player.getX() + player.getWidth() / 2.0,
-            player.getY() + player.getHeight() / 2.0));
+            player.getY() + player.getHeight() / 2.0,
+            dir * 70.0, player.isOnGround() ? 0.0 : -45.0));
     }
 
     public void shootIceProjectile() {

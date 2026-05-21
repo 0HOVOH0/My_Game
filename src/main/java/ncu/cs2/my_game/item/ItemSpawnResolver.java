@@ -20,11 +20,17 @@ public class ItemSpawnResolver {
 
     private final Rectangle2D ground;
     private final Rectangle2D[] platforms;
+    private final Rectangle2D[] solidObstacles;
     private final double worldWidth;
 
     public ItemSpawnResolver(Rectangle2D ground, Rectangle2D[] platforms) {
+        this(ground, platforms, new Rectangle2D[0]);
+    }
+
+    public ItemSpawnResolver(Rectangle2D ground, Rectangle2D[] platforms, Rectangle2D[] solidObstacles) {
         this.ground = ground;
-        this.platforms = platforms;
+        this.platforms = platforms == null ? new Rectangle2D[0] : platforms;
+        this.solidObstacles = solidObstacles == null ? new Rectangle2D[0] : solidObstacles;
         this.worldWidth = ground.getMaxX();
     }
 
@@ -153,10 +159,11 @@ public class ItemSpawnResolver {
         double bottom = hitbox.getMaxY();
         if (Math.abs(bottom - ground.getMinY()) < 0.5) return true;
 
-        for (Rectangle2D platform : platforms) {
-            boolean horizontal = hitbox.getMaxX() > platform.getMinX()
-                              && hitbox.getMinX() < platform.getMaxX();
-            if (horizontal && Math.abs(bottom - platform.getMinY()) < 0.5) {
+        for (Rectangle2D surface : getSurfaces()) {
+            if (surface == ground) continue;
+            boolean horizontal = hitbox.getMaxX() > surface.getMinX()
+                              && hitbox.getMinX() < surface.getMaxX();
+            if (horizontal && Math.abs(bottom - surface.getMinY()) < 0.5) {
                 return true;
             }
         }
@@ -169,6 +176,9 @@ public class ItemSpawnResolver {
         if (Collision.checkAABB(lifted, ground)) return true;
         for (Rectangle2D platform : platforms) {
             if (Collision.checkAABB(lifted, platform)) return true;
+        }
+        for (Rectangle2D obstacle : solidObstacles) {
+            if (Collision.checkAABB(lifted, obstacle)) return true;
         }
         return false;
     }
@@ -189,6 +199,19 @@ public class ItemSpawnResolver {
                 bestSurface = platform;
             }
         }
+        for (Rectangle2D obstacle : solidObstacles) {
+            if (obstacle.getMinY() <= 0) continue;
+            boolean horizontal = x + PickupItem.SIZE > obstacle.getMinX()
+                              && x < obstacle.getMaxX();
+            if (!horizontal) continue;
+
+            double itemY = obstacle.getMinY() - PickupItem.SIZE;
+            double distance = Math.abs(itemY - preferredY);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestSurface = obstacle;
+            }
+        }
         return bestSurface.getMinY() - PickupItem.SIZE;
     }
 
@@ -197,6 +220,11 @@ public class ItemSpawnResolver {
         surfaces.add(ground);
         for (Rectangle2D platform : platforms) {
             surfaces.add(platform);
+        }
+        for (Rectangle2D obstacle : solidObstacles) {
+            if (obstacle.getMinY() > 0) {
+                surfaces.add(obstacle);
+            }
         }
         return surfaces;
     }

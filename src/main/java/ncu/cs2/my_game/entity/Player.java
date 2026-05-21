@@ -31,7 +31,13 @@ public class Player extends Entity {
     public static final double ATTACK_COOLDOWN = 0.65;
 
     /** 半圓揮擊半徑（像素） */
-    public static final double ATTACK_ARC_RADIUS = 56.0;
+    public static final double ATTACK_ARC_RADIUS = 64.0;
+
+    /** 揮砍動畫與實際判定角度（面向方向左右各 75 度）。 */
+    public static final double ATTACK_ARC_DEGREES = 150.0;
+
+    private static final double ATTACK_WINDUP = 0.08;
+    private static final double ATTACK_ACTIVE_END = 0.18;
 
     /** 讓貼在玩家前半身的敵人也會被揮擊命中。 */
     private static final double ATTACK_FRONT_BODY_REACH = 18.0;
@@ -60,6 +66,9 @@ public class Player extends Entity {
 
     /** 面向方向；true = 右，false = 左 */
     private boolean facingRight;
+
+    /** 攻擊動畫期間鎖定的面向；避免揮砍中途被 A/D 改變。 */
+    private boolean attackFacingRight;
 
     /** 面向方向；供火球決定發射方向 */
     private Direction facingDirection;
@@ -137,6 +146,7 @@ public class Player extends Entity {
     public Player(double x, double y) {
         super(x, y, Config.PLAYER_WIDTH, Config.PLAYER_HEIGHT, Config.PLAYER_MAX_HP);
         facingRight    = true;
+        attackFacingRight = true;
         facingDirection = Direction.RIGHT;
         isCrouching    = false;
         isOnGround     = false;
@@ -203,14 +213,18 @@ public class Player extends Entity {
 
         if (activeKeys.contains(KeyCode.A)) {
             velocityX   = -speed;
-            facingRight = false;
-            facingDirection = Direction.LEFT;
+            if (!isAttacking) {
+                facingRight = false;
+                facingDirection = Direction.LEFT;
+            }
         }
         if (activeKeys.contains(KeyCode.D)) {
             // D 鍵後蓋 A 鍵，右方向優先
             velocityX   = speed;
-            facingRight = true;
-            facingDirection = Direction.RIGHT;
+            if (!isAttacking) {
+                facingRight = true;
+                facingDirection = Direction.RIGHT;
+            }
         }
     }
 
@@ -392,6 +406,7 @@ public class Player extends Entity {
      */
     private void startAttack() {
         isAttacking  = true;
+        attackFacingRight = facingRight;
         attackLanded = false;   // 新的揮擊開始，重置命中旗標
         attackTimer  = ATTACK_DURATION;
         attackCooldownTimer = ATTACK_COOLDOWN;
@@ -400,9 +415,10 @@ public class Player extends Entity {
     }
 
     private void updateAttackArcBounds() {
-        double centerX = facingRight ? x + width : x;
+        boolean attackRight = getAttackFacingRight();
+        double centerX = attackRight ? x + width : x;
         double centerY = y + height / 2.0;
-        double boxX = facingRight ? x + width / 2.0 : centerX - ATTACK_ARC_RADIUS;
+        double boxX = attackRight ? x + width / 2.0 : centerX - ATTACK_ARC_RADIUS;
         double boxY = centerY - ATTACK_ARC_RADIUS;
         attackBox = new Rectangle2D(boxX, boxY,
             ATTACK_ARC_RADIUS + width / 2.0, ATTACK_ARC_RADIUS * 2);
@@ -452,7 +468,8 @@ public class Player extends Entity {
         double spawnY = y + (height - fireballSize) / 2.0;
 
         fireballs.add(new Fireball(spawnX, spawnY, dirX, 0,
-                                   fireballSize, speed, damage, fillColor, strokeColor));
+                                   fireballSize, speed, damage, fillColor, strokeColor,
+                                   damage >= EMPOWERED_FIREBALL_DAMAGE));
     }
 
     /**
@@ -463,12 +480,16 @@ public class Player extends Entity {
     private void updateFacingDirectionFromKey(KeyCode key) {
         switch (key) {
             case A -> {
-                facingRight = false;
-                facingDirection = Direction.LEFT;
+                if (!isAttacking) {
+                    facingRight = false;
+                    facingDirection = Direction.LEFT;
+                }
             }
             case D -> {
-                facingRight = true;
-                facingDirection = Direction.RIGHT;
+                if (!isAttacking) {
+                    facingRight = true;
+                    facingDirection = Direction.RIGHT;
+                }
             }
             default -> {
                 // 其他按鍵不改變面向
@@ -541,7 +562,7 @@ public class Player extends Entity {
 
         // 以小三角形指示面向（待精靈圖後移除）
         gc.setFill(Color.WHITE);
-        if (facingRight) {
+        if (getVisualFacingRight()) {
             gc.fillPolygon(
                 new double[]{x + width - 4, x + width - 12, x + width - 12},
                 new double[]{y + height / 2.0, y + height / 2.0 - 6, y + height / 2.0 + 6},
@@ -564,14 +585,16 @@ public class Player extends Entity {
      */
     private void drawAttackBox(GraphicsContext gc) {
         gc.save();
-        gc.setGlobalAlpha(0.45);
+        gc.setGlobalAlpha(isAttackDamageActive() ? 0.50 : 0.20);
         gc.setFill(Color.YELLOW);
-        double centerX = facingRight ? x + width : x;
         double centerY = y + height / 2.0;
+        boolean attackRight = getAttackFacingRight();
+        double centerX = attackRight ? x + width : x;
         double arcX = centerX - ATTACK_ARC_RADIUS;
         double arcY = centerY - ATTACK_ARC_RADIUS;
         gc.fillArc(arcX, arcY, ATTACK_ARC_RADIUS * 2, ATTACK_ARC_RADIUS * 2,
-                   facingRight ? -90 : 90, 180, ArcType.ROUND);
+                   attackRight ? -ATTACK_ARC_DEGREES / 2.0 : 180 - ATTACK_ARC_DEGREES / 2.0,
+                   ATTACK_ARC_DEGREES, ArcType.ROUND);
         gc.restore();   // 恢復 alpha，避免影響後續繪製
     }
 
@@ -612,22 +635,39 @@ public class Player extends Entity {
     public Rectangle2D getAttackBox() { return attackBox; }
 
     public boolean isAttackHitting(Rectangle2D target) {
-        if (attackBox == null || !attackBox.intersects(target)) return false;
+        if (!isAttackDamageActive() || attackBox == null || !attackBox.intersects(target)) return false;
 
-        double centerX = facingRight ? x + width : x;
+        boolean attackRight = getAttackFacingRight();
+        double centerX = attackRight ? x + width : x;
         double centerY = y + height / 2.0;
         double targetX = target.getMinX() + target.getWidth() / 2.0;
         double targetY = target.getMinY() + target.getHeight() / 2.0;
         double dx = targetX - centerX;
         double dy = targetY - centerY;
-        if (facingRight && dx < 0) return false;
-        if (!facingRight && dx > 0) return false;
-        if (Math.sqrt(dx * dx + dy * dy) <= ATTACK_ARC_RADIUS) return true;
+        double distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance <= ATTACK_ARC_RADIUS && isInsideFacingArc(dx, dy)) return true;
 
-        double frontBodyX = facingRight ? x + width / 2.0 : x - ATTACK_FRONT_BODY_REACH;
+        double frontBodyX = attackRight ? x + width / 2.0 : x - ATTACK_FRONT_BODY_REACH;
         Rectangle2D frontBody = new Rectangle2D(frontBodyX, y,
             width / 2.0 + ATTACK_FRONT_BODY_REACH, height);
         return frontBody.intersects(target);
+    }
+
+    private boolean isInsideFacingArc(double dx, double dy) {
+        boolean attackRight = getAttackFacingRight();
+        if (attackRight && dx < 0) return false;
+        if (!attackRight && dx > 0) return false;
+
+        double angle = Math.toDegrees(Math.atan2(dy, Math.abs(dx)));
+        return Math.abs(angle) <= ATTACK_ARC_DEGREES / 2.0;
+    }
+
+    private boolean getAttackFacingRight() {
+        return isAttacking ? attackFacingRight : facingRight;
+    }
+
+    private boolean getVisualFacingRight() {
+        return isAttacking ? attackFacingRight : facingRight;
     }
 
     /**
@@ -637,7 +677,13 @@ public class Player extends Entity {
      *
      * @return 可以命中回傳 true，否則 false
      */
-    public boolean canHit() { return isAttacking && !attackLanded; }
+    public boolean canHit() { return isAttackDamageActive() && !attackLanded; }
+
+    public boolean isAttackDamageActive() {
+        if (!isAttacking) return false;
+        double elapsed = ATTACK_DURATION - attackTimer;
+        return elapsed >= ATTACK_WINDUP && elapsed <= ATTACK_ACTIVE_END;
+    }
 
     /**
      * 標記本次揮擊已命中目標，後續幀不再觸發傷害。
@@ -704,6 +750,7 @@ public class Player extends Entity {
         setMana(checkpointMana);
         isOnGround = false;
         facingRight = true;
+        attackFacingRight = true;
         facingDirection = Direction.RIGHT;
         isCrouching = false;
         width = Config.PLAYER_WIDTH;

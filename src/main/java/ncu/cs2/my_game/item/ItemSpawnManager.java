@@ -17,6 +17,11 @@ public class ItemSpawnManager {
         this.resolver = new ItemSpawnResolver(ground, platforms);
     }
 
+    public ItemSpawnManager(Rectangle2D ground, Rectangle2D[] platforms,
+                            Rectangle2D[] solidObstacles) {
+        this.resolver = new ItemSpawnResolver(ground, platforms, solidObstacles);
+    }
+
     /**
      * 產生道具，若目標位置重疊或不安全會自動找附近位置。
      */

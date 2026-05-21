@@ -19,6 +19,11 @@ public class GoldSpawnManager {
         resolver = new ItemSpawnResolver(ground, platforms);
     }
 
+    public GoldSpawnManager(Rectangle2D ground, Rectangle2D[] platforms,
+                            Rectangle2D[] solidObstacles) {
+        resolver = new ItemSpawnResolver(ground, platforms, solidObstacles);
+    }
+
     public GoldPickup spawn(int amount, double preferredX, double preferredY,
                             List<PickupItem> existingItems,
                             List<GoldPickup> existingGold) {

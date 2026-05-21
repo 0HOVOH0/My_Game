@@ -42,10 +42,10 @@ public class BossStateMachine extends StateMachine<BossState> {
     private static final double DASH_COOLDOWN = 2.5;
 
     /** CHASE 移動速度（像素 / 秒） */
-    private static final double CHASE_SPEED        = 90.0;
+    private static final double CHASE_SPEED        = 76.0;
 
     /** DASH 衝刺速度（像素 / 秒） */
-    private static final double DASH_SPEED         = 180.0;
+    private static final double DASH_SPEED         = 152.0;
 
     /** 觸發 DASH 的玩家距離閾值（像素）；設為 120 以確保玩家在攻擊範圍內時能可靠觸發 */
     private static final double DASH_TRIGGER_RANGE = 120.0;

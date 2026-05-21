@@ -14,8 +14,8 @@ public class RangedEnemy extends Enemy {
     private static final double ATTACK_RANGE = 360.0;
     private static final double KEEP_DISTANCE = 170.0;
     private static final double COOLDOWN = 1.9;
-    private static final double RANGED_DETECT_RANGE = 300.0;
-    private static final double RANGED_CHASE_RANGE = 385.0;
+    private static final double RANGED_DETECT_RANGE = 285.0;
+    private static final double RANGED_CHASE_RANGE = 360.0;
 
     private final Player player;
     private final List<Fireball> projectiles = new ArrayList<>();
@@ -82,6 +82,11 @@ public class RangedEnemy extends Enemy {
 
     @Override
     protected double getChaseRange() { return RANGED_CHASE_RANGE; }
+
+    @Override
+    protected boolean usesMeleeSlash() {
+        return false;
+    }
 
     private void keepDistance(double deltaTime) {
         if (!hasLineOfSightToPlayer()) return;

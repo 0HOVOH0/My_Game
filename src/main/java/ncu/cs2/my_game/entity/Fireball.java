@@ -4,6 +4,8 @@ import javafx.geometry.Rectangle2D;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
 import ncu.cs2.my_game.Config;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * 玩家施放的火球投射物。
@@ -32,6 +34,8 @@ public class Fireball {
     private final int damage;
     private final Color fillColor;
     private final Color strokeColor;
+    private final boolean piercesEnemies;
+    private final Set<Integer> hitTargets;
     private boolean alive;
     private static final double HITBOX_SCALE = 1.22;
 
@@ -63,6 +67,12 @@ public class Fireball {
     public Fireball(double x, double y, double dirX, double dirY,
                     double size, double speed, int damage,
                     Color fillColor, Color strokeColor) {
+        this(x, y, dirX, dirY, size, speed, damage, fillColor, strokeColor, false);
+    }
+
+    public Fireball(double x, double y, double dirX, double dirY,
+                    double size, double speed, int damage,
+                    Color fillColor, Color strokeColor, boolean piercesEnemies) {
         this.x = x;
         this.y = y;
         double length = Math.sqrt(dirX * dirX + dirY * dirY);
@@ -78,6 +88,8 @@ public class Fireball {
         this.damage = damage;
         this.fillColor = fillColor;
         this.strokeColor = strokeColor;
+        this.piercesEnemies = piercesEnemies;
+        this.hitTargets = new HashSet<>();
         this.alive = true;
     }
 
@@ -124,6 +136,16 @@ public class Fireball {
 
     /** 標記火球消失 */
     public void destroy() { alive = false; }
+
+    public boolean isPiercingEnemies() { return piercesEnemies; }
+
+    public boolean canHitTarget(Object target) {
+        return !hitTargets.contains(System.identityHashCode(target));
+    }
+
+    public void markTargetHit(Object target) {
+        hitTargets.add(System.identityHashCode(target));
+    }
 
     /** 回傳火球是否仍存在 */
     public boolean isAlive() { return alive; }

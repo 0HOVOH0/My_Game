@@ -76,7 +76,7 @@ public class ShopScene extends AnimationTimer {
         inventory = Main.getInventory();
         pickupItems = new ArrayList<>();
         itemSpawnManager = new ItemSpawnManager(ground, platforms);
-        shopManager = new ShopManager();
+        shopManager = new ShopManager(Main.getStageNumber());
 
         scene.setOnKeyPressed(e -> handleKeyPressed(e.getCode()));
         scene.setOnKeyReleased(e -> player.handleKeyReleased(e.getCode()));
@@ -126,6 +126,10 @@ public class ShopScene extends AnimationTimer {
         }
         if (key == KeyCode.ENTER || key == KeyCode.SPACE) {
             buySelectedItem();
+            return;
+        }
+        if (key == KeyCode.R) {
+            refreshShop();
             return;
         }
         int slotIndex = keyToSlotIndex(key);
@@ -185,12 +189,17 @@ public class ShopScene extends AnimationTimer {
     private void buySelectedItem() {
         ShopItem item = shopManager.get(selectedShopIndex);
         if (item == null) return;
+        if (item.isSoldOut()) {
+            showMessage("Sold Out");
+            return;
+        }
         if (!Main.spendGold(item.getPrice())) {
             showMessage("Not enough Gold");
             return;
         }
 
         if (inventory.add(item.getType())) {
+            item.consumeOne();
             showMessage("Bought " + item.getType().getHudLabel());
             return;
         }
@@ -201,10 +210,22 @@ public class ShopScene extends AnimationTimer {
             showMessage("Backpack full");
             return;
         }
+        item.consumeOne();
         addPickup(dropped.getType(), player.getX(),
             player.getY() + player.getHeight() - PickupItem.SIZE,
             dropped.getCount());
         showMessage("Bought and replaced Slot" + (selectedInventorySlot + 1));
+    }
+
+    private void refreshShop() {
+        int cost = shopManager.getRefreshCost();
+        if (!Main.spendGold(cost)) {
+            showMessage("Need " + cost + " Gold");
+            return;
+        }
+        shopManager.refreshShop();
+        selectedShopIndex = Math.min(selectedShopIndex, shopManager.getItems().size() - 1);
+        showMessage("Shop refreshed");
     }
 
     private void checkPickupItems() {
@@ -302,7 +323,7 @@ public class ShopScene extends AnimationTimer {
         double x = 230;
         double y = 120;
         double w = 340;
-        double h = 250;
+        double h = 310;
         gc.setFill(Color.web("#080a12", 0.92));
         gc.fillRoundRect(x, y, w, h, 8, 8);
         gc.setStroke(Color.GOLD);
@@ -313,17 +334,19 @@ public class ShopScene extends AnimationTimer {
         gc.setFont(Font.font(18));
         gc.fillText("Shop", x + 18, y + 30);
         gc.setFont(Font.font(12));
-        gc.fillText("Item | Price    Enter/Space: Buy    Esc: Close", x + 18, y + 54);
+        gc.fillText("Enter/Space: Buy    R: Refresh (" + shopManager.getRefreshCost() + "G)    Esc: Close",
+            x + 18, y + 54);
+        gc.fillText("Items refresh each shop. Stock resets after refresh.", x + 18, y + 72);
 
         for (int i = 0; i < shopManager.getItems().size(); i++) {
             ShopItem item = shopManager.get(i);
-            double rowY = y + 82 + i * 30;
+            double rowY = y + 105 + i * 30;
             if (i == selectedShopIndex) {
                 gc.setFill(Color.web("#3a3216"));
                 gc.fillRoundRect(x + 14, rowY - 18, w - 28, 24, 5, 5);
             }
             item.getType().drawIcon(gc, x + 24, rowY - 17, 20);
-            gc.setFill(Color.WHITE);
+            gc.setFill(item.isSoldOut() ? Color.GRAY : Color.WHITE);
             gc.fillText(item.getLabel(), x + 54, rowY);
         }
     }

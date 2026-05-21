@@ -13,7 +13,7 @@ public class IceProjectile extends Fireball {
     public static final double BOSS_SLOW_MULTIPLIER = 0.65;
 
     public IceProjectile(double x, double y, double dirX, double dirY) {
-        super(x, y, dirX, dirY, SIZE, SPEED, 0, Color.LIGHTCYAN, Color.DEEPSKYBLUE);
+        super(x, y, dirX, dirY, SIZE, SPEED, 0, Color.LIGHTCYAN, Color.DEEPSKYBLUE, true);
     }
 
     @Override

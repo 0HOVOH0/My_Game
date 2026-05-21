@@ -11,8 +11,8 @@ public class GroundSpike {
 
     private static final double WARNING_TIME = 0.8;
     private static final double ACTIVE_TIME = 0.35;
-    private static final double WIDTH = 52.0;
-    private static final double HEIGHT = 54.0;
+    public static final double WIDTH = 42.0;
+    private static final double HEIGHT = 50.0;
     private static final int DAMAGE = 18;
 
     private final double x;

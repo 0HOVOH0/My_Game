@@ -66,15 +66,16 @@ public class GroundSpikeBoss extends Boss {
         double playerCenter = player.getX() + player.getWidth() / 2.0;
         Rectangle2D surface = findSurfaceNearPlayer(playerCenter);
         double surfaceY = surface == null ? groundY : surface.getMinY();
-        int count = 3 + (int) (Math.random() * 4);
-        double spacing = 42.0;
+        int maxCount = surface == null ? 4 : Math.max(1, (int) (surface.getWidth() / 86.0));
+        int count = Math.min(maxCount, 2 + (int) (Math.random() * 3));
+        double spacing = 62.0;
         double start = playerCenter - (count - 1) * spacing / 2.0;
         for (int i = 0; i < count; i++) {
-            double jitter = (Math.random() - 0.5) * 18.0;
-            double rawX = start + i * spacing + jitter - 26.0;
+            double jitter = (Math.random() - 0.5) * 12.0;
+            double rawX = start + i * spacing + jitter - GroundSpike.WIDTH / 2.0;
             double targetX = surface == null
                 ? Math.max(20, Math.min(rawX, 730))
-                : Math.max(surface.getMinX(), Math.min(rawX, surface.getMaxX() - 52.0));
+                : Math.max(surface.getMinX(), Math.min(rawX, surface.getMaxX() - GroundSpike.WIDTH));
             spikes.add(new GroundSpike(targetX, surfaceY));
         }
     }
@@ -84,7 +85,7 @@ public class GroundSpikeBoss extends Boss {
         double bestScore = Double.MAX_VALUE;
         double playerBottom = player.getY() + player.getHeight();
         for (Rectangle2D surface : surfaces) {
-            if (surface.getWidth() < 56.0) continue;
+            if (!isSpikeSurface(surface)) continue;
             boolean horizontallyNear = playerCenter >= surface.getMinX() - 70
                 && playerCenter <= surface.getMaxX() + 70;
             if (!horizontallyNear) continue;
@@ -96,5 +97,11 @@ public class GroundSpikeBoss extends Boss {
             }
         }
         return best;
+    }
+
+    private boolean isSpikeSurface(Rectangle2D surface) {
+        if (surface.getWidth() < GroundSpike.WIDTH + 12.0) return false;
+        if (surface.getMinY() <= 0) return false;
+        return true;
     }
 }

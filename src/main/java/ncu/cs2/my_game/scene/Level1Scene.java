@@ -326,10 +326,12 @@ public class Level1Scene extends AnimationTimer {
                 continue;
             }
 
-            for (Rectangle2D platform : platforms) {
-                if (Collision.checkAABB(fireball.getHitbox(), platform)) {
-                    fireball.destroy();
-                    break;
+            if (!fireball.isPiercingEnemies()) {
+                for (Rectangle2D platform : platforms) {
+                    if (Collision.checkAABB(fireball.getHitbox(), platform)) {
+                        fireball.destroy();
+                        break;
+                    }
                 }
             }
         }

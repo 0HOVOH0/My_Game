@@ -3,6 +3,7 @@ package ncu.cs2.my_game.entity;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
+import javafx.scene.shape.ArcType;
 import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.physics.Gravity;
 
@@ -33,11 +34,19 @@ public class Enemy extends Entity {
     /** 巡邏移動速度（像素 / 秒） */
     private static final double PATROL_SPEED = 80.0;
 
-    private static final double DETECT_RANGE = 245.0;
-    private static final double CHASE_RANGE = 330.0;
+    private static final double DETECT_RANGE = 215.0;
+    private static final double CHASE_RANGE = 290.0;
     private static final double MEMORY_DURATION = 1.25;
     private static final double DROP_CHASE_MARGIN = 34.0;
     private static final double CHASE_JUMP_COOLDOWN = 1.25;
+    private static final double STUCK_CHECK_INTERVAL = 0.75;
+    private static final double STUCK_MIN_MOVE = 2.0;
+    private static final double MELEE_RANGE = 46.0;
+    private static final double MELEE_ARC_DEGREES = 150.0;
+    private static final double MELEE_WINDUP = 0.22;
+    private static final double MELEE_ACTIVE = 0.12;
+    private static final double MELEE_RECOVERY = 0.28;
+    private static final double MELEE_COOLDOWN = 1.25;
 
     // ── 巡邏邊界 ─────────────────────────────────────────────────────────────
 
@@ -76,7 +85,14 @@ public class Enemy extends Entity {
     private boolean hasLineOfSight;
     private boolean onGround;
     private double chaseJumpCooldown;
+    private double recoveryTimer;
+    private double stuckTimer;
+    private double lastResolvedX;
+    private double meleeTimer;
+    private double meleeCooldownTimer;
+    private boolean meleeDamageApplied;
     private Rectangle2D[] navigationSurfaces = new Rectangle2D[0];
+    private Rectangle2D[] movementBlockers = new Rectangle2D[0];
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -109,6 +125,12 @@ public class Enemy extends Entity {
         this.hasLineOfSight = false;
         this.onGround = false;
         this.chaseJumpCooldown = 0;
+        this.recoveryTimer = 0;
+        this.stuckTimer = 0;
+        this.lastResolvedX = x;
+        this.meleeTimer = 0;
+        this.meleeCooldownTimer = 0;
+        this.meleeDamageApplied = false;
     }
 
     // ── update ────────────────────────────────────────────────────────────────
@@ -128,7 +150,12 @@ public class Enemy extends Entity {
         Gravity.apply(this, deltaTime);
 
         // 2. 設定水平速度並更新位置
-        boolean chasing = targetPlayer != null && memoryTimer > 0;
+        if (recoveryTimer > 0) {
+            recoveryTimer -= deltaTime;
+            if (recoveryTimer < 0) recoveryTimer = 0;
+        }
+
+        boolean chasing = targetPlayer != null && memoryTimer > 0 && recoveryTimer <= 0;
         if (chasing) {
             double playerCenter = targetPlayer.getX() + targetPlayer.getWidth() / 2.0;
             double enemyCenter = x + width / 2.0;
@@ -141,6 +168,8 @@ public class Enemy extends Entity {
             chaseJumpCooldown -= deltaTime;
             if (chaseJumpCooldown < 0) chaseJumpCooldown = 0;
         }
+        updateMeleeTimers(deltaTime);
+        avoidWallBeforeMove(chasing);
         velocityX = moveDir * PATROL_SPEED * speedMultiplier;
         x += velocityX * deltaTime;
         y += velocityY * deltaTime;
@@ -200,8 +229,8 @@ public class Enemy extends Entity {
         hasLineOfSight = inDetectionRadius && !isLineBlocked(player, blockers);
         if (hasLineOfSight) {
             memoryTimer = MEMORY_DURATION;
-        } else if (inDetectionRadius && Math.abs(dy) < 190.0) {
-            memoryTimer = Math.max(memoryTimer, MEMORY_DURATION * 0.65);
+        } else if (inDetectionRadius) {
+            memoryTimer = Math.min(memoryTimer, 0.2);
         } else if (distance > getChaseRange()) {
             memoryTimer = 0;
         }
@@ -223,8 +252,12 @@ public class Enemy extends Entity {
         navigationSurfaces = surfaces == null ? new Rectangle2D[0] : surfaces;
     }
 
+    public void setMovementBlockers(Rectangle2D[] blockers) {
+        movementBlockers = blockers == null ? new Rectangle2D[0] : blockers;
+    }
+
     public boolean shouldDropFromPlatform() {
-        if (!onGround || !isChasingPlayer() || targetPlayer == null) return false;
+        if (!onGround || recoveryTimer > 0 || !isChasingPlayer() || targetPlayer == null) return false;
         boolean playerBelow = targetPlayer.getY() > y + height + 28.0;
         if (!playerBelow) return false;
 
@@ -237,7 +270,7 @@ public class Enemy extends Entity {
     }
 
     private void tryJumpChase(double playerCenter, double enemyCenter) {
-        if (!onGround || chaseJumpCooldown > 0 || targetPlayer == null) return;
+        if (!onGround || chaseJumpCooldown > 0 || recoveryTimer > 0 || targetPlayer == null) return;
 
         boolean playerHigher = targetPlayer.getY() + targetPlayer.getHeight()
             < y + height - 24.0;
@@ -249,6 +282,82 @@ public class Enemy extends Entity {
         velocityY = Config.JUMP_FORCE * 0.72;
         onGround = false;
         chaseJumpCooldown = CHASE_JUMP_COOLDOWN;
+    }
+
+    public void recoverFromWall() {
+        recoverFromWall(0);
+    }
+
+    public void recoverFromWall(int collisionSide) {
+        if (recoveryTimer > 0.05) return;
+
+        if (collisionSide == 1) {
+            moveDir = -1.0;
+        } else if (collisionSide == 2) {
+            moveDir = 1.0;
+        } else {
+            moveDir *= -1.0;
+        }
+
+        boolean activelyChasing = isChasingPlayer() && hasLineOfSight;
+        if (!activelyChasing) {
+            memoryTimer = 0;
+        }
+        recoveryTimer = activelyChasing ? 0.22 : 0.45;
+        if (activelyChasing && onGround && chaseJumpCooldown <= 0
+            && targetPlayer != null
+            && targetPlayer.getY() + targetPlayer.getHeight() < y + height - 18.0) {
+            velocityY = Config.JUMP_FORCE * 0.34;
+            onGround = false;
+            chaseJumpCooldown = 0.65;
+        }
+    }
+
+    private void avoidWallBeforeMove(boolean chasing) {
+        if (!onGround || recoveryTimer > 0 || movementBlockers.length == 0) return;
+
+        Rectangle2D wallAhead = getWallAhead(moveDir);
+        if (wallAhead == null) return;
+        int wallSide = moveDir > 0 ? 1 : 2;
+
+        if (chasing && hasLineOfSight && usesMeleeSlash() && tryVaultWall(wallAhead)) {
+            return;
+        }
+        recoverFromWall(wallSide);
+    }
+
+    private Rectangle2D getWallAhead(double direction) {
+        double probeOffset = direction > 0 ? 6.0 : -6.0;
+        Rectangle2D probe = new Rectangle2D(x + probeOffset, y + 3.0,
+            width, height - 6.0);
+        for (Rectangle2D blocker : movementBlockers) {
+            if (blocker.getHeight() <= 24.0) continue;
+            if (probe.intersects(blocker)) {
+                return blocker;
+            }
+        }
+        return null;
+    }
+
+    private boolean tryVaultWall(Rectangle2D wall) {
+        if (chaseJumpCooldown > 0 || targetPlayer == null) return false;
+
+        double enemyFeet = y + height;
+        double climbHeight = enemyFeet - wall.getMinY();
+        double playerCenter = targetPlayer.getX() + targetPlayer.getWidth() / 2.0;
+        double enemyCenter = x + width / 2.0;
+        boolean playerBeyondWall = moveDir > 0
+            ? playerCenter > wall.getMaxX()
+            : playerCenter < wall.getMinX();
+        boolean reasonableWall = climbHeight > 8.0 && climbHeight <= 155.0 && wall.getWidth() <= 190.0;
+        boolean closeEnough = Math.abs(playerCenter - enemyCenter) <= 260.0;
+        if (!playerBeyondWall || !reasonableWall || !closeEnough) return false;
+
+        velocityY = Config.JUMP_FORCE * 0.82;
+        onGround = false;
+        recoveryTimer = 0;
+        chaseJumpCooldown = 0.95;
+        return true;
     }
 
     private boolean hasReachableLandingSurface(double playerCenter) {
@@ -296,10 +405,27 @@ public class Enemy extends Entity {
      * @return 本次是否觸發了傷害呼叫（冷卻中回傳 false）
      */
     public boolean tryDamagePlayer(Player player) {
-        if (damageCooldown > 0) return false;
+        if (!usesMeleeSlash()) {
+            if (damageCooldown > 0 || !getHitbox().intersects(player.getHitbox())) return false;
 
-        player.takeDamage(contactDamage);
-        damageCooldown = DAMAGE_COOLDOWN;   // 重置冷卻
+            player.takeDamage(contactDamage);
+            damageCooldown = DAMAGE_COOLDOWN;
+            return true;
+        }
+
+        if (meleeTimer <= 0 && meleeCooldownTimer <= 0 && isPlayerInMeleeArc(player)) {
+            startMeleeAttack(player);
+        }
+
+        if (isMeleeActive() && !meleeDamageApplied && isPlayerInMeleeArc(player)) {
+            player.takeDamage(contactDamage);
+            meleeDamageApplied = true;
+            return true;
+        }
+        return false;
+    }
+
+    protected boolean usesMeleeSlash() {
         return true;
     }
 
@@ -313,6 +439,28 @@ public class Enemy extends Entity {
     public void setOnGround(boolean onGround) {
         this.onGround = onGround;
         if (onGround && velocityY > 0) velocityY = 0;
+    }
+
+    public void updateStuckRecovery(double deltaTime) {
+        if (!isAlive() || recoveryTimer > 0) {
+            lastResolvedX = x;
+            stuckTimer = 0;
+            return;
+        }
+
+        boolean tryingToMove = onGround && Math.abs(velocityX) > 1.0;
+        double moved = Math.abs(x - lastResolvedX);
+        if (tryingToMove && moved < STUCK_MIN_MOVE) {
+            stuckTimer += deltaTime;
+        } else {
+            stuckTimer = Math.max(0, stuckTimer - deltaTime * 2.0);
+        }
+        lastResolvedX = x;
+
+        if (stuckTimer >= STUCK_CHECK_INTERVAL) {
+            recoverFromWall(moveDir > 0 ? 1 : 2);
+            stuckTimer = 0;
+        }
     }
 
     // ── draw ─────────────────────────────────────────────────────────────────
@@ -342,6 +490,76 @@ public class Enemy extends Entity {
 
         // 頭頂血量條
         drawHpBar(gc);
+        drawAlertIndicator(gc);
+        drawMeleeSlash(gc);
+    }
+
+    private void updateMeleeTimers(double deltaTime) {
+        if (meleeCooldownTimer > 0) {
+            meleeCooldownTimer -= deltaTime;
+            if (meleeCooldownTimer < 0) meleeCooldownTimer = 0;
+        }
+        if (meleeTimer > 0) {
+            meleeTimer -= deltaTime;
+            if (meleeTimer <= 0) {
+                meleeTimer = 0;
+            }
+        }
+    }
+
+    private void startMeleeAttack(Player player) {
+        moveDir = player.getX() + player.getWidth() / 2.0 > x + width / 2.0 ? 1.0 : -1.0;
+        meleeTimer = MELEE_WINDUP + MELEE_ACTIVE + MELEE_RECOVERY;
+        meleeCooldownTimer = MELEE_COOLDOWN;
+        meleeDamageApplied = false;
+    }
+
+    private boolean isMeleeActive() {
+        double elapsed = MELEE_WINDUP + MELEE_ACTIVE + MELEE_RECOVERY - meleeTimer;
+        return elapsed >= MELEE_WINDUP && elapsed <= MELEE_WINDUP + MELEE_ACTIVE;
+    }
+
+    private boolean isPlayerInMeleeArc(Player player) {
+        Rectangle2D target = player.getHitbox();
+        double originX = moveDir > 0 ? x + width : x;
+        double originY = y + height * 0.56;
+        double targetX = target.getMinX() + target.getWidth() / 2.0;
+        double targetY = target.getMinY() + target.getHeight() / 2.0;
+        double dx = targetX - originX;
+        double dy = targetY - originY;
+        if (moveDir > 0 && dx < -width * 0.35) return false;
+        if (moveDir < 0 && dx > width * 0.35) return false;
+        double distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance > MELEE_RANGE) return false;
+        double angle = Math.toDegrees(Math.atan2(dy, Math.abs(dx)));
+        return Math.abs(angle) <= MELEE_ARC_DEGREES / 2.0;
+    }
+
+    private void drawAlertIndicator(GraphicsContext gc) {
+        if (!isChasingPlayer() && !hasLineOfSight) return;
+        double bob = Math.sin(System.nanoTime() / 120_000_000.0) * 2.0;
+        gc.setFont(javafx.scene.text.Font.font("Arial", javafx.scene.text.FontWeight.BOLD, 22));
+        double textX = x + width / 2.0 - 5.0;
+        double textY = y - 14.0 + bob;
+        gc.setStroke(Color.web("#5a3b00"));
+        gc.setLineWidth(3.0);
+        gc.strokeText("!", textX, textY);
+        gc.setFill(Color.GOLD);
+        gc.fillText("!", textX, textY);
+    }
+
+    private void drawMeleeSlash(GraphicsContext gc) {
+        if (meleeTimer <= 0) return;
+        gc.save();
+        gc.setGlobalAlpha(isMeleeActive() ? 0.45 : 0.22);
+        gc.setFill(Color.web("#ffdf6a"));
+        double originX = moveDir > 0 ? x + width : x;
+        double originY = y + height * 0.56;
+        gc.fillArc(originX - MELEE_RANGE, originY - MELEE_RANGE,
+            MELEE_RANGE * 2, MELEE_RANGE * 2,
+            moveDir > 0 ? -MELEE_ARC_DEGREES / 2.0 : 180 - MELEE_ARC_DEGREES / 2.0,
+            MELEE_ARC_DEGREES, ArcType.ROUND);
+        gc.restore();
     }
 
     /**
