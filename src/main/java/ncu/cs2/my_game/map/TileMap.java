@@ -11,6 +11,10 @@ import java.util.List;
  */
 public class TileMap {
     public static final int TILE_SIZE = 32;
+    public static final int SPAWN_SAFE_WIDTH_TILES = 10;
+    public static final int SPAWN_SAFE_HEIGHT_TILES = 6;
+    public static final int EXIT_SAFE_RADIUS_TILES = 4;
+    public static final int MIN_EXIT_DISTANCE_FROM_SPAWN_TILES = 30;
 
     private final int widthTiles;
     private final int heightTiles;
@@ -23,6 +27,9 @@ public class TileMap {
     private double spawnY;
     private Rectangle2D exitBounds;
     private PlatformValidationResult validationResult;
+    private MapValidationResult mapValidationResult;
+    private SpawnSafeZone spawnSafeZone;
+    private SpawnSafeZone exitSafeZone;
 
     public TileMap(int widthTiles, int heightTiles) {
         this.widthTiles = widthTiles;
@@ -135,17 +142,49 @@ public class TileMap {
     public void setSpawn(double spawnX, double spawnY) {
         this.spawnX = spawnX;
         this.spawnY = spawnY;
+        this.spawnSafeZone = new SpawnSafeZone(
+            spawnX + 16,
+            spawnY + 16,
+            SPAWN_SAFE_WIDTH_TILES,
+            SPAWN_SAFE_HEIGHT_TILES
+        );
     }
 
     public Rectangle2D getExitBounds() { return exitBounds; }
 
     public void setExitBounds(Rectangle2D exitBounds) {
         this.exitBounds = exitBounds;
+        if (exitBounds != null) {
+            this.exitSafeZone = new SpawnSafeZone(
+                exitBounds.getMinX() + exitBounds.getWidth() / 2.0,
+                exitBounds.getMinY() + exitBounds.getHeight() / 2.0,
+                EXIT_SAFE_RADIUS_TILES * 2,
+                EXIT_SAFE_RADIUS_TILES * 2
+            );
+        }
     }
 
     public PlatformValidationResult getValidationResult() { return validationResult; }
 
     public void setValidationResult(PlatformValidationResult validationResult) {
         this.validationResult = validationResult;
+    }
+
+    public MapValidationResult getMapValidationResult() { return mapValidationResult; }
+
+    public void setMapValidationResult(MapValidationResult mapValidationResult) {
+        this.mapValidationResult = mapValidationResult;
+    }
+
+    public SpawnSafeZone getSpawnSafeZone() { return spawnSafeZone; }
+
+    public SpawnSafeZone getExitSafeZone() { return exitSafeZone; }
+
+    public boolean isInsideSpawnSafeZone(double x, double y) {
+        return spawnSafeZone != null && spawnSafeZone.contains(x, y);
+    }
+
+    public boolean isInSpawnSafeZone(int tileX, int tileY) {
+        return spawnSafeZone != null && spawnSafeZone.containsTile(tileX, tileY);
     }
 }

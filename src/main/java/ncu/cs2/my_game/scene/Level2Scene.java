@@ -28,6 +28,7 @@ import ncu.cs2.my_game.item.PickupItem;
 import ncu.cs2.my_game.item.PickupType;
 import ncu.cs2.my_game.item.UseContext;
 import ncu.cs2.my_game.map.DungeonMapRenderer;
+import ncu.cs2.my_game.map.MapValidationResult;
 import ncu.cs2.my_game.map.PlatformDungeonGenerator;
 import ncu.cs2.my_game.map.PlatformValidationResult;
 import ncu.cs2.my_game.map.TileMap;
@@ -215,6 +216,7 @@ public class Level2Scene extends AnimationTimer {
         player = new Player(tileMap.getSpawnX(), tileMap.getSpawnY());
         player.setHp(Main.getPersistedHp());
         player.setMana(Main.getPersistedMana());
+        player.startInvincibility(Config.PLAYER_SPAWN_PROTECTION_SECONDS);
         effectManager = new EffectManager();
         flowController = GameFlowController.forScene(this::cleanup, () -> Main.startLevel2());
 
@@ -718,6 +720,7 @@ public class Level2Scene extends AnimationTimer {
                                   initialSnapshot.getPlayerY(),
                                   initialSnapshot.getPlayerHp(),
                                   initialSnapshot.getPlayerMana());
+        player.startInvincibility(Config.PLAYER_SPAWN_PROTECTION_SECONDS);
         initialSnapshot.restoreInventory(inventory);
 
         EnemySnapshot[] snapshots = initialSnapshot.getEnemySnapshots();
@@ -1401,6 +1404,12 @@ public class Level2Scene extends AnimationTimer {
             lines.add("Map valid: " + result.valid() + " (" + result.reason() + ")");
             lines.add("Platforms: " + result.reachablePlatformCount() + "/" + result.platformCount());
             lines.add("Unreachable: " + result.unreachablePlatformCount());
+        }
+        MapValidationResult mapResult = tileMap.getMapValidationResult();
+        if (mapResult != null) {
+            lines.add("Spawn->Exit: " + mapResult.spawnToExitReachable());
+            lines.add("Retry count: " + mapResult.retryCount());
+            lines.add("Validation: " + mapResult.reason());
         }
         return lines;
     }

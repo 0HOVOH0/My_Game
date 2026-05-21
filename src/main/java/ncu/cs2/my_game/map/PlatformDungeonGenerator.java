@@ -46,17 +46,22 @@ public class PlatformDungeonGenerator {
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             TileMap map = buildCandidate(widthTiles, levelIndex, config);
             PlatformValidationResult result = validatePlatformMap(map, stats);
+            MapValidationResult mapResult = validateGeneratedMap(map, result, attempt);
             map.setValidationResult(result);
-            if (result.valid()) {
+            map.setMapValidationResult(mapResult);
+            if (mapResult.isValid()) {
                 printGenerationReport(levelIndex, result);
                 return map;
             }
+            System.out.println("Map generation failed: " + mapResult.reason());
         }
 
         TileMap fallback = buildCandidate(widthTiles, levelIndex, config);
         carveGuaranteedBridge(fallback);
         PlatformValidationResult result = validatePlatformMap(fallback, stats);
+        MapValidationResult mapResult = validateGeneratedMap(fallback, result, MAX_ATTEMPTS);
         fallback.setValidationResult(result);
+        fallback.setMapValidationResult(mapResult);
         printGenerationReport(levelIndex, result);
         return fallback;
     }
@@ -103,17 +108,48 @@ public class PlatformDungeonGenerator {
         map.setSpawn(spawnPlatform.getMinX() + TileMap.TILE_SIZE,
             spawnPlatform.getMinY() - Config.PLAYER_HEIGHT);
         map.setTile(2, 14, TileType.SPAWN);
+        clearSpawnSafeZone(map);
 
-        Rectangle2D exitPlatform = route.get(route.size() - 1);
-        double exitX = exitPlatform.getMaxX() - TileMap.TILE_SIZE * 1.5;
+        Rectangle2D exitPlatform = chooseExitPlatform(map, route);
+        double exitX = Math.max(exitPlatform.getMinX() + TileMap.TILE_SIZE,
+            exitPlatform.getMaxX() - TileMap.TILE_SIZE * 1.5);
         double exitY = exitPlatform.getMinY() - TileMap.TILE_SIZE * 2.2;
         map.setExitBounds(new Rectangle2D(exitX, exitY, TileMap.TILE_SIZE * 1.2, TileMap.TILE_SIZE * 2.2));
         map.setTile((int) (exitX / TileMap.TILE_SIZE), (int) (exitY / TileMap.TILE_SIZE), TileType.EXIT);
 
         addBranches(map, route, levelIndex, config);
-        addTrapsAndDecorations(map, route, levelIndex);
         addEnemyAndRewardZones(map, route, levelIndex);
+        addTrapsAndDecorations(map, route, levelIndex);
         return map;
+    }
+
+    private Rectangle2D chooseExitPlatform(TileMap map, List<Rectangle2D> route) {
+        PlacementValidator validator = new PlacementValidator(map);
+        for (int i = route.size() - 1; i >= 0; i--) {
+            Rectangle2D platform = route.get(i);
+            double exitX = Math.max(platform.getMinX() + TileMap.TILE_SIZE,
+                platform.getMaxX() - TileMap.TILE_SIZE * 1.5);
+            double exitY = platform.getMinY() - TileMap.TILE_SIZE * 2.2;
+            Rectangle2D candidate = new Rectangle2D(exitX, exitY, TileMap.TILE_SIZE * 1.2, TileMap.TILE_SIZE * 2.2);
+            if (validator.isValidExitPlacement(candidate)) {
+                return platform;
+            }
+        }
+        return route.get(route.size() - 1);
+    }
+
+    private void clearSpawnSafeZone(TileMap map) {
+        if (map.getSpawnSafeZone() == null) return;
+        for (int y = 1; y < map.getHeightTiles() - 1; y++) {
+            for (int x = 1; x < map.getWidthTiles() - 1; x++) {
+                if (map.getSpawnSafeZone().containsTile(x, y)) {
+                    TileType type = map.getTile(x, y);
+                    if (type == TileType.SPIKE || type == TileType.DECORATION || type == TileType.WALL) {
+                        map.setTile(x, y, TileType.EMPTY);
+                    }
+                }
+            }
+        }
     }
 
     private void clearMainRouteAirspace(TileMap map, List<Rectangle2D> route) {
@@ -206,8 +242,11 @@ public class PlatformDungeonGenerator {
             TileType type = random.nextDouble() < config.oneWayPlatformChance()
                 ? TileType.ONE_WAY_PLATFORM : TileType.PLATFORM;
             Rectangle2D branch = addRun(map, startX, tileY, length, type);
-            map.addRewardZone(new Rectangle2D(branch.getMinX() + branch.getWidth() / 2.0 - 12,
-                branch.getMinY() - 28, 24, 24));
+            Rectangle2D reward = new Rectangle2D(branch.getMinX() + branch.getWidth() / 2.0 - 12,
+                branch.getMinY() - 28, 24, 24);
+            if (new PlacementValidator(map).isValidRewardPlacement(reward)) {
+                map.addRewardZone(reward);
+            }
 
             if (random.nextDouble() < 0.45) {
                 int ladderX = startX + length / 2;
@@ -222,24 +261,31 @@ public class PlatformDungeonGenerator {
 
     private void addTrapsAndDecorations(TileMap map, List<Rectangle2D> route, int levelIndex) {
         int trapCount = levelIndex == 1 ? 6 : 10;
+        PlacementValidator validator = new PlacementValidator(map);
         Set<Integer> mainCenters = new HashSet<>();
         for (Rectangle2D platform : route) {
             mainCenters.add((int) (platform.getMinX() / TileMap.TILE_SIZE));
         }
 
-        for (int i = 0; i < trapCount; i++) {
+        int placed = 0;
+        for (int i = 0; i < trapCount * 5 && placed < trapCount; i++) {
             Rectangle2D platform = route.get(random.nextInt(route.size()));
             int start = (int) (platform.getMinX() / TileMap.TILE_SIZE) + 1;
             int end = (int) (platform.getMaxX() / TileMap.TILE_SIZE) - 2;
             if (end <= start) continue;
             int x = start + random.nextInt(end - start + 1);
             if (mainCenters.contains(x)) continue;
-            map.setTile(x, (int) (platform.getMinY() / TileMap.TILE_SIZE) - 1, TileType.SPIKE);
+            int y = (int) (platform.getMinY() / TileMap.TILE_SIZE) - 1;
+            if (validator.canPlaceSpikeAt(x, y)) {
+                map.setTile(x, y, TileType.SPIKE);
+                placed++;
+            }
         }
 
         for (int x = 3; x < map.getWidthTiles() - 3; x += 3 + random.nextInt(4)) {
             int y = 2 + random.nextInt(map.getHeightTiles() - 5);
             if (map.getTile(x, y) == TileType.EMPTY && random.nextDouble() < 0.5) {
+                if (validator.isInSpawnSafeZone(x, y) || validator.isInExitSafeZone(x, y)) continue;
                 map.setTile(x, y, TileType.DECORATION);
             }
         }
@@ -247,17 +293,24 @@ public class PlatformDungeonGenerator {
 
     private void addEnemyAndRewardZones(TileMap map, List<Rectangle2D> route, int levelIndex) {
         int enemies = levelIndex == 1 ? 2 : 5;
+        PlacementValidator validator = new PlacementValidator(map);
         for (int i = 1; i < route.size() - 1 && enemies > 0; i += Math.max(2, route.size() / (levelIndex == 1 ? 3 : 6))) {
             Rectangle2D platform = route.get(i);
             if (platform.getWidth() < TileMap.TILE_SIZE * 4) continue;
+            Rectangle2D enemyProbe = new Rectangle2D(platform.getMinX(), platform.getMinY() - 48,
+                platform.getWidth(), 48);
+            if (!validator.isValidRewardPlacement(enemyProbe)) continue;
             map.addEnemyZone(platform);
             enemies--;
         }
 
         for (int i = 1; i < route.size() - 1; i += 4) {
             Rectangle2D platform = route.get(i);
-            map.addRewardZone(new Rectangle2D(platform.getMinX() + platform.getWidth() / 2.0 - 12,
-                platform.getMinY() - 28, 24, 24));
+            Rectangle2D reward = new Rectangle2D(platform.getMinX() + platform.getWidth() / 2.0 - 12,
+                platform.getMinY() - 28, 24, 24);
+            if (validator.isValidRewardPlacement(reward)) {
+                map.addRewardZone(reward);
+            }
         }
     }
 
@@ -341,6 +394,90 @@ public class PlatformDungeonGenerator {
             if (index < 0 || !visited[index]) return false;
         }
         return true;
+    }
+
+    public MapValidationResult validateGeneratedMap(TileMap map,
+                                                    PlatformValidationResult platformResult,
+                                                    int retryCount) {
+        List<String> errors = new ArrayList<>();
+        PlacementValidator validator = new PlacementValidator(map);
+        boolean hasSpawnHazard = false;
+        boolean exitTooClose = false;
+
+        if (map.getSpawnSafeZone() == null) {
+            errors.add("Spawn safe zone missing");
+        }
+        if (map.getExitSafeZone() == null || map.getExitBounds() == null) {
+            errors.add("Exit safe zone missing");
+        }
+        if (map.getExitBounds() != null && !validator.isValidExitPlacement(map.getExitBounds())) {
+            errors.add("Invalid exit placement");
+        }
+        if (map.getExitBounds() != null) {
+            double dx = Math.abs(map.getExitBounds().getMinX() - map.getSpawnX());
+            exitTooClose = dx < TileMap.MIN_EXIT_DISTANCE_FROM_SPAWN_TILES * TileMap.TILE_SIZE;
+            if (exitTooClose) {
+                errors.add("Exit inside minimum spawn distance");
+            }
+        }
+
+        int spawnTileX = (int) ((map.getSpawnX() + Config.PLAYER_WIDTH / 2.0) / TileMap.TILE_SIZE);
+        int spawnFootTileY = (int) ((map.getSpawnY() + Config.PLAYER_HEIGHT + 1) / TileMap.TILE_SIZE);
+        TileType foot = map.getTile(spawnTileX, spawnFootTileY);
+        if (!foot.isStandable() && !foot.isSolid()) {
+            errors.add("Spawn has no safe floor");
+        }
+
+        Rectangle2D standing = new Rectangle2D(map.getSpawnX(), map.getSpawnY(),
+            Config.PLAYER_WIDTH, Config.PLAYER_HEIGHT);
+        for (Rectangle2D solid : map.getSolidTilesNear(standing)) {
+            if (solid.intersects(standing)) {
+                errors.add("Spawn overlaps wall");
+                break;
+            }
+        }
+
+        for (int y = 0; y < map.getHeightTiles(); y++) {
+            for (int x = 0; x < map.getWidthTiles(); x++) {
+                TileType type = map.getTile(x, y);
+                if (type == TileType.SPIKE && validator.isInSpawnSafeZone(x, y)) {
+                    hasSpawnHazard = true;
+                    errors.add("Spike placed near spawn");
+                }
+                if (type == TileType.SPIKE && validator.isInExitSafeZone(x, y)) {
+                    errors.add("Spike placed near exit");
+                }
+                if (type == TileType.WALL && validator.isInExitSafeZone(x, y)) {
+                    Rectangle2D wall = map.tileBounds(x, y);
+                    if (map.getExitBounds() != null && wall.intersects(map.getExitBounds())) {
+                        errors.add("Wall blocks exit");
+                    }
+                }
+            }
+        }
+
+        for (Rectangle2D zone : map.getEnemyZones()) {
+            Rectangle2D enemyProbe = new Rectangle2D(zone.getMinX(), zone.getMinY() - 48,
+                zone.getWidth(), 48);
+            if (map.getSpawnSafeZone() != null && map.getSpawnSafeZone().intersects(enemyProbe)) {
+                hasSpawnHazard = true;
+                errors.add("Enemy placed near spawn");
+            }
+        }
+
+        if (!platformResult.spawnToExitReachable()) {
+            errors.add("Spawn cannot reach exit");
+        }
+        if (!platformResult.valid()) {
+            errors.add(platformResult.reason());
+        }
+
+        if (errors.isEmpty()) {
+            return MapValidationResult.valid(platformResult.unreachablePlatformCount(),
+                platformResult.spawnToExitReachable(), retryCount);
+        }
+        return MapValidationResult.invalid(errors, platformResult.unreachablePlatformCount(),
+            platformResult.spawnToExitReachable(), hasSpawnHazard, exitTooClose, retryCount);
     }
 
     private void printGenerationReport(int levelIndex, PlatformValidationResult result) {

@@ -87,6 +87,12 @@ public final class Config {
     /** Slash attack GIF resource path. Replace this file to change the attack effect. */
     public static final String SLASH_EFFECT_RESOURCE = "/assets/effects/slash.gif";
 
+    /** Transparent slash PNG sequence directory. Preferred over GIF to avoid black backgrounds. */
+    public static final String SLASH_EFFECT_FRAME_PATTERN = "/assets/effects/slash/slash_%02d.png";
+
+    /** Slash PNG sequence frame count. */
+    public static final int SLASH_EFFECT_FRAME_COUNT = 5;
+
     /** Slash attack fallback file name for local development. */
     public static final String SLASH_EFFECT_FALLBACK_FILE = "斬擊.gif";
 
@@ -101,6 +107,9 @@ public final class Config {
 
     /** Extra effect spawn cooldown to avoid repeated GIF allocation while attack is held. */
     public static final double SLASH_EFFECT_COOLDOWN = 0.12;
+
+    /** Invulnerability after spawning or respawning. */
+    public static final double PLAYER_SPAWN_PROTECTION_SECONDS = 2.0;
 
     /** Boss 最大血量 */
     public static final int BOSS_MAX_HP   = 600;

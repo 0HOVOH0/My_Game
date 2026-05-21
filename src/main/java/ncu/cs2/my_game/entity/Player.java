@@ -522,6 +522,12 @@ public class Player extends Entity {
         flickerVisible  = false;   // 受傷瞬間先隱藏，產生閃爍感
     }
 
+    public void startInvincibility(double duration) {
+        invincibleTimer = Math.max(invincibleTimer, duration);
+        flickerTimer = FLICKER_INTERVAL;
+        flickerVisible = true;
+    }
+
     // ── draw ─────────────────────────────────────────────────────────────────
 
     /**

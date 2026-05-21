@@ -14,6 +14,7 @@ import ncu.cs2.my_game.effect.EffectManager;
 import ncu.cs2.my_game.entity.Fireball;
 import ncu.cs2.my_game.entity.Player;
 import ncu.cs2.my_game.map.DungeonMapRenderer;
+import ncu.cs2.my_game.map.MapValidationResult;
 import ncu.cs2.my_game.map.PlatformValidationResult;
 import ncu.cs2.my_game.map.PlatformDungeonGenerator;
 import ncu.cs2.my_game.map.TileMap;
@@ -54,6 +55,7 @@ public class Level1Scene extends AnimationTimer {
         Fireball.setWorldBounds(tileMap.getWorldWidth(), Config.WINDOW_HEIGHT);
 
         player = new Player(tileMap.getSpawnX(), tileMap.getSpawnY());
+        player.startInvincibility(Config.PLAYER_SPAWN_PROTECTION_SECONDS);
         effectManager = new EffectManager();
         flowController = GameFlowController.forScene(this::cleanup, () -> Main.startLevel1());
 
@@ -279,6 +281,12 @@ public class Level1Scene extends AnimationTimer {
             lines.add("Map valid: " + result.valid() + " (" + result.reason() + ")");
             lines.add("Platforms: " + result.reachablePlatformCount() + "/" + result.platformCount());
             lines.add("Unreachable: " + result.unreachablePlatformCount());
+        }
+        MapValidationResult mapResult = tileMap.getMapValidationResult();
+        if (mapResult != null) {
+            lines.add("Spawn->Exit: " + mapResult.spawnToExitReachable());
+            lines.add("Retry count: " + mapResult.retryCount());
+            lines.add("Validation: " + mapResult.reason());
         }
         return lines;
     }

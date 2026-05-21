@@ -126,6 +126,25 @@ public final class DungeonMapRenderer {
         if (result == null) return;
 
         gc.save();
+        if (map.getSpawnSafeZone() != null) {
+            Rectangle2D zone = map.getSpawnSafeZone().getBounds();
+            gc.setGlobalAlpha(0.16);
+            gc.setFill(Color.web("#37ff77"));
+            gc.fillRect(zone.getMinX() - cameraX, zone.getMinY(), zone.getWidth(), zone.getHeight());
+            gc.setGlobalAlpha(1.0);
+            gc.setStroke(Color.web("#37ff77"));
+            gc.strokeRect(zone.getMinX() - cameraX, zone.getMinY(), zone.getWidth(), zone.getHeight());
+        }
+        if (map.getExitSafeZone() != null) {
+            Rectangle2D zone = map.getExitSafeZone().getBounds();
+            gc.setGlobalAlpha(0.16);
+            gc.setFill(Color.web("#55b7ff"));
+            gc.fillRect(zone.getMinX() - cameraX, zone.getMinY(), zone.getWidth(), zone.getHeight());
+            gc.setGlobalAlpha(1.0);
+            gc.setStroke(Color.web("#55b7ff"));
+            gc.strokeRect(zone.getMinX() - cameraX, zone.getMinY(), zone.getWidth(), zone.getHeight());
+        }
+
         gc.setLineWidth(2);
         gc.setStroke(Color.web("#36d66b"));
         for (Rectangle2D platform : map.getMainPlatforms()) {
@@ -143,6 +162,17 @@ public final class DungeonMapRenderer {
         for (Rectangle2D reward : map.getRewardZones()) {
             gc.strokeRect(reward.getMinX() - cameraX - 6, reward.getMinY() - 6,
                 reward.getWidth() + 12, reward.getHeight() + 12);
+        }
+
+        gc.setStroke(Color.web("#ff334e"));
+        for (int y = 0; y < map.getHeightTiles(); y++) {
+            for (int x = 0; x < map.getWidthTiles(); x++) {
+                if (map.getTile(x, y) == TileType.SPIKE) {
+                    Rectangle2D spike = map.tileBounds(x, y);
+                    gc.strokeRect(spike.getMinX() - cameraX + 3, spike.getMinY() + 3,
+                        spike.getWidth() - 6, spike.getHeight() - 6);
+                }
+            }
         }
         gc.restore();
     }

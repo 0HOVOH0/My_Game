@@ -240,6 +240,7 @@ public class BossScene extends AnimationTimer {
         player = new Player(70, 460);
         player.setHp(Main.getPersistedHp());
         player.setMana(Main.getPersistedMana());
+        player.startInvincibility(Config.PLAYER_SPAWN_PROTECTION_SECONDS);
 
         inventory = Main.getInventory();
         pickupItems = new ArrayList<>();
@@ -703,6 +704,7 @@ public class BossScene extends AnimationTimer {
                                   initialSnapshot.getPlayerY(),
                                   initialSnapshot.getPlayerHp(),
                                   initialSnapshot.getPlayerMana());
+        player.startInvincibility(Config.PLAYER_SPAWN_PROTECTION_SECONDS);
         initialSnapshot.restoreInventory(inventory);
         pickupItems.clear();
         pickupItems.addAll(initialSnapshot.createPickupItems());
