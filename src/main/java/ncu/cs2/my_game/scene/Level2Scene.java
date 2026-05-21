@@ -26,6 +26,10 @@ import ncu.cs2.my_game.item.ItemSpawnManager;
 import ncu.cs2.my_game.item.PickupItem;
 import ncu.cs2.my_game.item.PickupType;
 import ncu.cs2.my_game.item.UseContext;
+import ncu.cs2.my_game.map.DungeonMapRenderer;
+import ncu.cs2.my_game.map.PlatformDungeonGenerator;
+import ncu.cs2.my_game.map.TileMap;
+import ncu.cs2.my_game.map.TileType;
 import ncu.cs2.my_game.physics.Collision;
 import ncu.cs2.my_game.stage.StageDefinition;
 import ncu.cs2.my_game.stage.StageType;
@@ -64,7 +68,7 @@ public class Level2Scene extends AnimationTimer {
     private static final double GROUND_Y = Config.WINDOW_HEIGHT - Config.GROUND_THICKNESS;
 
     /** 普通關世界寬度，Canvas 只顯示其中一段。 */
-    private static final double WORLD_WIDTH = Config.WINDOW_WIDTH * 2.0;
+    private static final double WORLD_WIDTH = TileMap.TILE_SIZE * 96.0;
 
     private static final double CULL_MARGIN = 96.0;
 
@@ -99,6 +103,9 @@ public class Level2Scene extends AnimationTimer {
 
     /** 玩家實體 */
     private final Player player;
+
+    /** 本關地下城 tile map，負責地形資料與視覺呈現。 */
+    private final TileMap tileMap;
 
     /** 地板碰撞框 */
     private final Rectangle2D ground;
@@ -197,9 +204,10 @@ public class Level2Scene extends AnimationTimer {
 
         Scene javafxScene = CanvasSceneSupport.createScaledCanvasScene(stage, canvas);
         Fireball.setWorldBounds(WORLD_WIDTH, Config.WINDOW_HEIGHT);
+        tileMap = new PlatformDungeonGenerator().generateLevel(2);
 
         // ── 初始化玩家（帶入 Level1 結束時的血量） ────────────────────────────
-        player = new Player(50, 440);
+        player = new Player(tileMap.getSpawnX(), tileMap.getSpawnY());
         player.setHp(Main.getPersistedHp());
         player.setMana(Main.getPersistedMana());
 
@@ -212,10 +220,7 @@ public class Level2Scene extends AnimationTimer {
         navigationSurfaces = mergeBlockers(new Rectangle2D[] { ground }, visionBlockers);
 
         // ── 終點門 ────────────────────────────────────────────────────────────
-        boolean lowerGoal = Math.random() < 0.45;
-        goalDoor = lowerGoal
-            ? new Rectangle2D(WORLD_WIDTH - GOAL_W - 42, GROUND_Y - GOAL_H, GOAL_W, GOAL_H)
-            : new Rectangle2D(WORLD_WIDTH - GOAL_W - 20, 150 - GOAL_H + PLAT_H, GOAL_W, GOAL_H);
+        goalDoor = tileMap.getExitBounds();
 
         // ── 敵人（每個敵人的巡邏範圍對應所在平台邊界） ───────────────────────
         // 巡邏右邊界 = 平台右端 - 敵人寬度，確保不會走出平台
@@ -346,6 +351,7 @@ public class Level2Scene extends AnimationTimer {
 
         // 4.5 若玩家放開 S，且頭頂空間足夠，恢復站立
         tryResolvePlayerStandUp();
+        damagePlayerOnTraps();
 
         // 5. 玩家左右邊界：不讓玩家走出世界
         if (player.getX() < 0)
@@ -537,34 +543,9 @@ public class Level2Scene extends AnimationTimer {
     }
 
     private Rectangle2D[] createProceduralPlatforms() {
-        boolean complex = stageDefinition.getDifficulty() >= 5
-            || stageDefinition.getType() == StageType.PLATFORM;
-        double upperJitter = complex ? 22.0 : 12.0;
-        List<Rectangle2D> generated = new ArrayList<>();
-        addRandomPlatform(generated, 12, 78, 488, 516, 5, 8);
-        addRandomPlatform(generated, 170, 285, 405, 460, 4, 8);
-        addRandomPlatform(generated, 345, 480, 330, 385, 4, 8);
-        addRandomPlatform(generated, 520, 660, 410, 472, 4, 9);
-        addRandomPlatform(generated, 170, 330, 245 - upperJitter, 300 + upperJitter, 4, 9);
-        addRandomPlatform(generated, 35, 160, 178 - upperJitter, 230 + upperJitter, 3, 8);
-        addRandomPlatform(generated, 240, 390, 142, 205, 4, 9);
-        addRandomPlatform(generated, 465, 645, 128, 182, 6, 10);
-        addRandomPlatform(generated, 760, 905, 450, 505, 5, 9);
-        addRandomPlatform(generated, 760, 900, 210, 285, 4, 8);
-        addRandomPlatform(generated, 940, 1095, 360, 430, 4, 8);
-        addRandomPlatform(generated, 940, 1100, 120, 205, 4, 8);
-        addRandomPlatform(generated, 1120, 1280, 270, 340, 5, 9);
-        addRandomPlatform(generated, 1180, 1325, 440, 505, 4, 8);
-        addRandomPlatform(generated, 1290, 1455, 195, 265, 5, 9);
-        addRandomPlatform(generated, 1365, 1510, 125, 180, 4, 8);
-        if (stageDefinition.getDifficulty() >= 5) {
-            addRandomPlatform(generated, 700, 840, 300, 360, 4, 8);
-            addRandomPlatform(generated, 1030, 1175, 215, 285, 4, 8);
-        }
-        if (stageDefinition.getDifficulty() >= 9 || stageDefinition.getType() == StageType.ELITE) {
-            addRandomPlatform(generated, 885, 1015, 140, 190, 3, 6);
-        }
-        return generated.toArray(Rectangle2D[]::new);
+        return tileMap.getMainPlatforms().stream()
+            .map(p -> new Rectangle2D(p.getMinX(), p.getMinY(), p.getWidth(), PLAT_H))
+            .toArray(Rectangle2D[]::new);
     }
 
     private double rand(double min, double max) {
@@ -625,17 +606,13 @@ public class Level2Scene extends AnimationTimer {
     }
 
     private Rectangle2D[] createCoverWalls() {
-        double heightJitter = random.nextDouble() * 18.0;
-        double lateBonus = Math.min(52.0, stageDefinition.getDifficulty() * 4.0);
         List<Rectangle2D> generated = new ArrayList<>();
-        addCoverIfValid(generated, new Rectangle2D(315 + rand(-35, 38), GROUND_Y - 106 - heightJitter, 64 + rand(0, 38), 106 + heightJitter));
-        addCoverIfValid(generated, new Rectangle2D(660 + rand(-42, 42), GROUND_Y - 76, 76 + rand(0, 42), 76));
-        addCoverIfValid(generated, new Rectangle2D(900 + rand(-38, 45), GROUND_Y - 118 - lateBonus * 0.65, 58 + rand(0, 42), 118 + lateBonus * 0.65));
-        addCoverIfValid(generated, anchoredCover(9, 0.66, 64 + rand(0, 42), 68 + rand(0, 32)));
-        addCoverIfValid(generated, new Rectangle2D(1215 + rand(-30, 35), GROUND_Y - 86 - lateBonus * 0.25, 82 + rand(0, 34), 86 + lateBonus * 0.25));
-        if (stageDefinition.getDifficulty() >= 5) {
-            addCoverIfValid(generated, new Rectangle2D(720 + rand(-32, 32), 0, 42 + rand(0, 24), 130 + rand(0, 54)));
-            addCoverIfValid(generated, new Rectangle2D(1130 + rand(-28, 36), 0, 38 + rand(0, 26), 150 + rand(0, 62)));
+        for (int y = 0; y < tileMap.getHeightTiles(); y++) {
+            for (int x = 0; x < tileMap.getWidthTiles(); x++) {
+                if (tileMap.getTile(x, y) == TileType.WALL) {
+                    addCoverIfValid(generated, tileMap.tileBounds(x, y));
+                }
+            }
         }
         return generated.toArray(Rectangle2D[]::new);
     }
@@ -704,6 +681,15 @@ public class Level2Scene extends AnimationTimer {
     private void updateCamera() {
         double target = player.getX() + player.getWidth() / 2.0 - Config.WINDOW_WIDTH / 2.0;
         cameraX = Math.max(0, Math.min(target, WORLD_WIDTH - Config.WINDOW_WIDTH));
+    }
+
+    private void damagePlayerOnTraps() {
+        for (Rectangle2D trap : tileMap.getHazardTilesNear(player.getHitbox())) {
+            if (Collision.checkAABB(player.getHitbox(), trap)) {
+                player.takeDamage(14);
+                return;
+            }
+        }
     }
 
     /**
@@ -1196,20 +1182,10 @@ public class Level2Scene extends AnimationTimer {
      * @param gc 畫布繪圖上下文
      */
     private void render(GraphicsContext gc) {
-        // 1. 背景（深海藍，TODO: 換成視差捲動背景圖片）
-        gc.setFill(Color.web("#1a1a3e"));
-        gc.fillRect(0, 0, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
+        DungeonMapRenderer.draw(gc, tileMap, cameraX, "BOSS");
 
-        // 2. 地板（TODO: 換成地面圖塊）
         gc.save();
         gc.translate(-cameraX, 0);
-        gc.setFill(Color.web("#5a3a1a"));
-        gc.fillRect(cameraX - CULL_MARGIN, ground.getMinY(),
-                    Config.WINDOW_WIDTH + CULL_MARGIN * 2, ground.getHeight());
-
-        // 3. 所有平台（TODO: 換成 Tileset 圖塊）
-        drawPlatforms(gc);
-        drawCovers(gc);
 
         // 4. 加血道具（TODO: 換成精靈圖）
         drawHealthItem(gc);
@@ -1228,9 +1204,6 @@ public class Level2Scene extends AnimationTimer {
         for (BombEntity bomb : bombs) {
             bomb.draw(gc);
         }
-
-        // 6. 終點門（TODO: 換成門的精靈圖與開門動畫）
-        drawGoalDoor(gc);
 
         // 7. 所有存活的敵人
         for (Enemy enemy : enemies) {
