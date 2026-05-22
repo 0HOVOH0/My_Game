@@ -117,6 +117,9 @@ public class PlatformDungeonGenerator {
         map.setExitBounds(new Rectangle2D(exitX, exitY, TileMap.TILE_SIZE * 1.2, TileMap.TILE_SIZE * 2.2));
         map.setTile((int) (exitX / TileMap.TILE_SIZE), (int) (exitY / TileMap.TILE_SIZE), TileType.EXIT);
 
+        addLShapedWalls(map, route, levelIndex);
+        clearMainRouteAirspace(map, route);
+        addConnectorPlatforms(map, route, levelIndex);
         addBranches(map, route, levelIndex, config);
         addEnemyAndRewardZones(map, route, levelIndex);
         addTrapsAndDecorations(map, route, levelIndex);
@@ -196,9 +199,9 @@ public class PlatformDungeonGenerator {
             map.setTile(map.getWidthTiles() - 1, y, TileType.WALL);
         }
 
-        for (int x = 4; x < map.getWidthTiles() - 4; x += 7 + random.nextInt(6)) {
-            int top = 3 + random.nextInt(7);
-            int bottom = Math.min(map.getHeightTiles() - 2, top + 3 + random.nextInt(4));
+        for (int x = 4; x < map.getWidthTiles() - 4; x += 8 + random.nextInt(7)) {
+            int top = 2 + random.nextInt(6);
+            int bottom = Math.min(map.getHeightTiles() - 2, top + 5 + random.nextInt(6));
             for (int y = top; y <= bottom; y++) {
                 if (random.nextDouble() < 0.76) {
                     map.setTile(x, y, TileType.WALL);
@@ -223,9 +226,135 @@ public class PlatformDungeonGenerator {
         }
     }
 
+    private void addLShapedWalls(TileMap map, List<Rectangle2D> route, int levelIndex) {
+        int count = 8 + Math.min(8, levelIndex * 2);
+        PlacementValidator validator = new PlacementValidator(map);
+        for (int i = 0; i < count * 5 && count > 0; i++) {
+            int arm = 3 + random.nextInt(5 + Math.min(3, levelIndex / 2));
+            int height = 3 + random.nextInt(5 + Math.min(4, levelIndex / 2));
+            boolean fromFloor = random.nextDouble() < 0.68;
+            boolean mirror = random.nextBoolean();
+            boolean inverted = !fromFloor && random.nextBoolean();
+            int x = 4 + random.nextInt(Math.max(1, map.getWidthTiles() - arm - 8));
+            int anchorY = fromFloor
+                ? map.getHeightTiles() - 2
+                : 1 + random.nextInt(Math.max(1, map.getHeightTiles() / 3));
+
+            List<int[]> tiles = lWallTiles(x, anchorY, arm, height, fromFloor, mirror, inverted);
+            if (canPlaceWallShape(map, route, validator, tiles)) {
+                for (int[] tile : tiles) {
+                    map.setTile(tile[0], tile[1], TileType.WALL);
+                }
+                count--;
+            }
+        }
+    }
+
+    private void addConnectorPlatforms(TileMap map, List<Rectangle2D> route, int levelIndex) {
+        int extra = Math.min(6, 2 + levelIndex);
+        for (int i = 0; i < route.size() - 1 && extra > 0; i++) {
+            Rectangle2D from = route.get(i);
+            Rectangle2D to = route.get(i + 1);
+            double gap = to.getMinX() - from.getMaxX();
+            if (gap < TileMap.TILE_SIZE * 2.2) continue;
+
+            int length = 2 + random.nextInt(3);
+            int startX = (int) ((from.getMaxX() + gap * (0.35 + random.nextDouble() * 0.25)) / TileMap.TILE_SIZE);
+            int fromY = (int) (from.getMinY() / TileMap.TILE_SIZE);
+            int toY = (int) (to.getMinY() / TileMap.TILE_SIZE);
+            int midY = clamp((fromY + toY) / 2 + (random.nextBoolean() ? 1 : -1), 5, 16);
+            if (Math.abs(midY - fromY) * TileMap.TILE_SIZE < Config.PLAYER_HEIGHT) {
+                midY = clamp(fromY + (toY >= fromY ? 2 : -2), 5, 16);
+            }
+            if (startX <= 2 || startX + length >= map.getWidthTiles() - 2) continue;
+            if (canPlaceConnector(map, startX, midY, length)) {
+                addRun(map, startX, midY, length, TileType.ONE_WAY_PLATFORM);
+                extra--;
+            }
+        }
+    }
+
+    private boolean canPlaceConnector(TileMap map, int startX, int tileY, int length) {
+        for (int x = startX; x < startX + length; x++) {
+            if (map.getTile(x, tileY) != TileType.EMPTY) return false;
+            for (int y = Math.max(1, tileY - 3); y <= tileY; y++) {
+                if (map.getTile(x, y) == TileType.WALL) return false;
+            }
+        }
+        return true;
+    }
+
+    private List<int[]> lWallTiles(int x, int anchorY, int arm, int height,
+                                   boolean fromFloor, boolean mirror, boolean inverted) {
+        List<int[]> tiles = new ArrayList<>();
+        int stemX = mirror ? x + arm - 1 : x;
+        int verticalStart = fromFloor ? anchorY - height + 1 : anchorY;
+        int verticalEnd = fromFloor ? anchorY : anchorY + height - 1;
+        for (int y = verticalStart; y <= verticalEnd; y++) {
+            tiles.add(new int[] { stemX, y });
+        }
+
+        int armY;
+        if (fromFloor) {
+            armY = inverted ? verticalStart : anchorY;
+        } else {
+            armY = inverted ? verticalEnd : anchorY;
+        }
+        for (int dx = 0; dx < arm; dx++) {
+            tiles.add(new int[] { x + dx, armY });
+        }
+        return tiles;
+    }
+
+    private boolean canPlaceWallShape(TileMap map, List<Rectangle2D> route,
+                                      PlacementValidator validator, List<int[]> tiles) {
+        for (int[] tile : tiles) {
+            int x = tile[0];
+            int y = tile[1];
+            if (x <= 1 || x >= map.getWidthTiles() - 2 || y <= 0 || y >= map.getHeightTiles() - 1) {
+                return false;
+            }
+            if (validator.isInSpawnSafeZone(x, y) || validator.isInExitSafeZone(x, y)) {
+                return false;
+            }
+            TileType type = map.getTile(x, y);
+            if (type != TileType.EMPTY && type != TileType.WALL) {
+                return false;
+            }
+            if (isProtectedRouteTile(route, x, y)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isProtectedRouteTile(List<Rectangle2D> route, int tileX, int tileY) {
+        double x = tileX * TileMap.TILE_SIZE;
+        for (Rectangle2D platform : route) {
+            int platformY = (int) (platform.getMinY() / TileMap.TILE_SIZE);
+            boolean overlapsX = x + TileMap.TILE_SIZE > platform.getMinX() - Config.PLAYER_WIDTH
+                && x < platform.getMaxX() + Config.PLAYER_WIDTH;
+            boolean inHeadroom = tileY >= platformY - 3 && tileY <= platformY;
+            if (overlapsX && inHeadroom) return true;
+        }
+        for (int i = 0; i < route.size() - 1; i++) {
+            Rectangle2D a = route.get(i);
+            Rectangle2D b = route.get(i + 1);
+            double minX = Math.min(a.getMaxX(), b.getMaxX()) - Config.PLAYER_WIDTH;
+            double maxX = Math.max(a.getMinX(), b.getMinX()) + Config.PLAYER_WIDTH;
+            int topY = (int) (Math.min(a.getMinY(), b.getMinY()) / TileMap.TILE_SIZE) - 4;
+            int bottomY = (int) (Math.max(a.getMinY(), b.getMinY()) / TileMap.TILE_SIZE) + 1;
+            boolean inGapX = x + TileMap.TILE_SIZE > minX && x < maxX;
+            boolean inGapY = tileY >= topY && tileY <= bottomY;
+            if (inGapX && inGapY) return true;
+        }
+        return false;
+    }
+
     private void addBranches(TileMap map, List<Rectangle2D> route, int levelIndex,
                              PlatformGenerationConfig config) {
-        int branchCount = levelIndex == 1 ? 5 : 7;
+        if (route.size() < 3) return;
+        int branchCount = levelIndex == 1 ? 8 : 12;
         for (int i = 0; i < branchCount; i++) {
             if (random.nextDouble() > config.branchChance()) continue;
             Rectangle2D base = route.get(1 + random.nextInt(Math.max(1, route.size() - 2)));

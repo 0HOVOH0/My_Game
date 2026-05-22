@@ -14,7 +14,7 @@ public class IceScrollItem extends PickupItem {
 
     @Override
     public void use(UseContext context) {
-        context.shootIceProjectile();
+        context.freezeEnemiesNearPlayer(160.0, 2.6, 1.3);
     }
 
     @Override

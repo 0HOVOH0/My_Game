@@ -286,7 +286,7 @@ public class ShopScene extends AnimationTimer {
     }
 
     private boolean isPortalEnterKey(KeyCode key) {
-        return key == KeyCode.W || key == KeyCode.UP || key == KeyCode.ENTER;
+        return key == KeyCode.ENTER;
     }
 
     private void showMessage(String text) {
@@ -348,7 +348,7 @@ public class ShopScene extends AnimationTimer {
     private void drawExitPrompt() {
         gc.setFill(Color.WHITE);
         gc.setFont(Font.font(14));
-        gc.fillText("Press W / Up / Enter", exitDoor.getMinX() - 82, exitDoor.getMinY() - 12);
+        gc.fillText("Press Enter", exitDoor.getMinX() - 32, exitDoor.getMinY() - 12);
     }
 
     private void drawShopUI() {

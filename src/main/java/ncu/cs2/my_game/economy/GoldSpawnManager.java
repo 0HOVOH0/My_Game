@@ -24,6 +24,10 @@ public class GoldSpawnManager {
         resolver = new ItemSpawnResolver(ground, platforms, solidObstacles);
     }
 
+    public void setForbiddenZones(List<Rectangle2D> forbiddenZones) {
+        resolver.setForbiddenZones(forbiddenZones);
+    }
+
     public GoldPickup spawn(int amount, double preferredX, double preferredY,
                             List<PickupItem> existingItems,
                             List<GoldPickup> existingGold) {

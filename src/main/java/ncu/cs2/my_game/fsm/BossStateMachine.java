@@ -159,7 +159,8 @@ public class BossStateMachine extends StateMachine<BossState> {
         double distance = Math.abs(dx);
 
         // 朝玩家方向移動
-        boss.setVelocityX(dx > 0 ? CHASE_SPEED : -CHASE_SPEED);
+        double chaseSpeed = CHASE_SPEED * bossMoveMultiplier();
+        boss.setVelocityX(dx > 0 ? chaseSpeed : -chaseSpeed);
 
         // RAGE 優先：血量低於 30% 立即進入狂暴
         if (getHpRatio() < RAGE_HP_THRESHOLD) {
@@ -184,10 +185,11 @@ public class BossStateMachine extends StateMachine<BossState> {
      */
     private void updateDash() {
         double dx = player.getX() - boss.getX();
-        boss.setVelocityX(dx > 0 ? DASH_SPEED : -DASH_SPEED);
+        double dashSpeed = DASH_SPEED * bossDashMultiplier();
+        boss.setVelocityX(dx > 0 ? dashSpeed : -dashSpeed);
 
         // 衝刺時間結束，停止並回到 CHASE，啟動冷卻
-        if (stateTimer >= DASH_DURATION) {
+        if (stateTimer >= DASH_DURATION * bossDashDurationMultiplier()) {
             boss.setVelocityX(0);
             dashCooldown = DASH_COOLDOWN;
             transitionTo(BossState.CHASE);
@@ -203,7 +205,8 @@ public class BossStateMachine extends StateMachine<BossState> {
     private void updateRage(double deltaTime) {
         // 繼續追擊玩家
         double dx = player.getX() - boss.getX();
-        boss.setVelocityX(dx > 0 ? CHASE_SPEED : -CHASE_SPEED);
+        double chaseSpeed = CHASE_SPEED * bossMoveMultiplier();
+        boss.setVelocityX(dx > 0 ? chaseSpeed : -chaseSpeed);
 
         // 累加射擊計時器，達到間隔則觸發發射回調
         rageFireTimer += deltaTime;
@@ -286,7 +289,9 @@ public class BossStateMachine extends StateMachine<BossState> {
 
     private boolean canStartDash() {
         if (!(boss instanceof Boss smartBoss)) return true;
-        return smartBoss.canStartDashToward(player, DASH_SPEED, DASH_DURATION);
+        return smartBoss.canStartDashToward(player,
+            DASH_SPEED * smartBoss.getDashSpeedMultiplier(),
+            DASH_DURATION * smartBoss.getDashDurationMultiplier());
     }
 
     /**
@@ -295,6 +300,22 @@ public class BossStateMachine extends StateMachine<BossState> {
     private double randomSpellCooldown(double distance) {
         double cooldown = 1.0 + Math.random() * 2.0;
         if (distance > FAR_CAST_RANGE) cooldown += 1.5;
-        return cooldown;
+        return cooldown * bossSpellCooldownMultiplier();
+    }
+
+    private double bossMoveMultiplier() {
+        return boss instanceof Boss smartBoss ? smartBoss.getChaseSpeedMultiplier() : 1.0;
+    }
+
+    private double bossDashMultiplier() {
+        return boss instanceof Boss smartBoss ? smartBoss.getDashSpeedMultiplier() : 1.0;
+    }
+
+    private double bossDashDurationMultiplier() {
+        return boss instanceof Boss smartBoss ? smartBoss.getDashDurationMultiplier() : 1.0;
+    }
+
+    private double bossSpellCooldownMultiplier() {
+        return boss instanceof Boss smartBoss ? smartBoss.getSpellCooldownMultiplier() : 1.0;
     }
 }

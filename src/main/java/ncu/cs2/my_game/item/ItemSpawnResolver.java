@@ -21,10 +21,15 @@ public class ItemSpawnResolver {
     private final Rectangle2D ground;
     private final Rectangle2D[] platforms;
     private final Rectangle2D[] solidObstacles;
+    private List<Rectangle2D> forbiddenZones = List.of();
     private final double worldWidth;
 
     public ItemSpawnResolver(Rectangle2D ground, Rectangle2D[] platforms) {
         this(ground, platforms, new Rectangle2D[0]);
+    }
+
+    public void setForbiddenZones(List<Rectangle2D> forbiddenZones) {
+        this.forbiddenZones = forbiddenZones == null ? List.of() : List.copyOf(forbiddenZones);
     }
 
     public ItemSpawnResolver(Rectangle2D ground, Rectangle2D[] platforms, Rectangle2D[] solidObstacles) {
@@ -85,6 +90,10 @@ public class ItemSpawnResolver {
         }
         for (Rectangle2D occupied : extraOccupied) {
             if (Collision.checkAABB(padded, occupied)) return true;
+        }
+        Rectangle2D safeArea = expand(hitbox, PickupItem.SIZE * 0.65);
+        for (Rectangle2D forbidden : forbiddenZones) {
+            if (Collision.checkAABB(safeArea, forbidden)) return true;
         }
         return false;
     }

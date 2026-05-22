@@ -4,6 +4,7 @@ import javafx.geometry.Rectangle2D;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
 import ncu.cs2.my_game.Config;
+import ncu.cs2.my_game.effect.MeleeSlashRenderer;
 import ncu.cs2.my_game.fsm.BossState;
 import ncu.cs2.my_game.fsm.BossStateMachine;
 import ncu.cs2.my_game.physics.Gravity;
@@ -27,6 +28,13 @@ public class Boss extends Entity {
 
     /** DASH 攻擊框在前方的延伸長度（像素） */
     private static final double DASH_BOX_EXTENT = 40.0;
+    private static final double MELEE_RANGE = 82.0;
+    private static final double MELEE_ARC_DEGREES = 150.0;
+    private static final double MELEE_WINDUP = 0.24;
+    private static final double MELEE_ACTIVE = 0.14;
+    private static final double MELEE_RECOVERY = 0.36;
+    private static final double MELEE_COOLDOWN = 1.45;
+    private static final int MELEE_DAMAGE = 8;
 
     // ── 依賴 ─────────────────────────────────────────────────────────────────
 
@@ -39,6 +47,7 @@ public class Boss extends Entity {
     /** 目前存活的投射物列表；由 shootProjectile() 新增，update() 清除出界的 */
     protected final List<Fireball> projectiles;
     private double slowTimer;
+    private double freezeTimer;
     private double slowMultiplier = 1.0;
     private boolean onGround;
     private double jumpCooldown;
@@ -47,6 +56,10 @@ public class Boss extends Entity {
     private double dashWorldWidth = Config.WINDOW_WIDTH;
     private boolean isDead;
     private boolean deathHandled;
+    private double meleeTimer;
+    private double meleeCooldownTimer;
+    private boolean meleeDamageApplied;
+    private boolean meleeFacingRight;
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -71,6 +84,11 @@ public class Boss extends Entity {
         this.jumpCooldown = 0.8;
         this.isDead = false;
         this.deathHandled = false;
+        this.meleeTimer = 0;
+        this.meleeCooldownTimer = MELEE_COOLDOWN * 0.5;
+        this.meleeDamageApplied = false;
+        this.meleeFacingRight = true;
+        this.freezeTimer = 0;
         // 將 this::shootProjectile 傳入 FSM，讓 RAGE 狀態直接呼叫
         this.fsm         = new BossStateMachine(this, player, this::shootProjectile);
     }
@@ -87,8 +105,26 @@ public class Boss extends Entity {
     public void update(double deltaTime) {
         if (isDead || deathHandled) return;
 
+        if (freezeTimer > 0) {
+            freezeTimer -= deltaTime;
+            if (freezeTimer < 0) freezeTimer = 0;
+            velocityX = 0;
+            meleeTimer = 0;
+            Gravity.apply(this, deltaTime);
+            y += velocityY * deltaTime;
+            projectiles.removeIf(p -> !p.isAlive());
+            for (Fireball p : projectiles) {
+                p.update(deltaTime);
+            }
+            return;
+        }
+
         // 1. FSM 決定水平速度與狀態轉換
         fsm.update(deltaTime);
+        updateMelee(deltaTime);
+        if (isMovementLockedByAbility()) {
+            velocityX = 0;
+        }
         if (slowTimer > 0) {
             slowTimer -= deltaTime;
             if (slowTimer <= 0) {
@@ -101,6 +137,9 @@ public class Boss extends Entity {
 
         // 2. 套用重力（累加 velocityY）
         Gravity.apply(this, deltaTime);
+        if (isMovementLockedByAbility()) {
+            velocityX = 0;
+        }
 
         // 3. 依速度更新座標
         x += velocityX * slowMultiplier * deltaTime;
@@ -110,6 +149,27 @@ public class Boss extends Entity {
         projectiles.removeIf(p -> !p.isAlive());
         for (Fireball p : projectiles) {
             p.update(deltaTime);
+        }
+    }
+
+    private void updateMelee(double deltaTime) {
+        if (!usesBossMelee()) return;
+        if (meleeCooldownTimer > 0) {
+            meleeCooldownTimer -= deltaTime;
+            if (meleeCooldownTimer < 0) meleeCooldownTimer = 0;
+        }
+        if (meleeTimer > 0) {
+            meleeTimer -= deltaTime;
+            if (meleeTimer < 0) meleeTimer = 0;
+        }
+
+        if (getCurrentState() == BossState.DASH) return;
+        if (meleeTimer <= 0 && meleeCooldownTimer <= 0 && isPlayerInMeleeArc()) {
+            startBossMelee();
+        }
+        if (isBossMeleeActive() && !meleeDamageApplied && isPlayerInMeleeArc()) {
+            player.takeDamage(MELEE_DAMAGE);
+            meleeDamageApplied = true;
         }
     }
 
@@ -136,9 +196,34 @@ public class Boss extends Entity {
         slowMultiplier = Math.min(slowMultiplier, multiplier);
     }
 
+    public void applyFreeze(double duration) {
+        freezeTimer = Math.max(freezeTimer, duration);
+        velocityX = 0;
+        meleeTimer = 0;
+        meleeDamageApplied = false;
+    }
+
+    public boolean isFrozen() {
+        return freezeTimer > 0;
+    }
+
     public void setOnGround(boolean onGround) {
         this.onGround = onGround;
         if (onGround && velocityY > 0) velocityY = 0;
+    }
+
+    protected boolean isOnGround() {
+        return onGround;
+    }
+
+    public boolean shouldDropFromPlatform() {
+        if (isMovementLockedByAbility() || !onGround || player == null) return false;
+        double playerBottom = player.getY() + player.getHeight();
+        boolean playerBelow = player.getY() > y + height + 26.0;
+        double bossCenter = x + width / 2.0;
+        double playerCenter = player.getX() + player.getWidth() / 2.0;
+        boolean closeEnough = Math.abs(playerCenter - bossCenter) < 170.0;
+        return playerBelow && closeEnough && playerBottom > y + height + 44.0;
     }
 
     public void configureDashNavigation(Rectangle2D[] blockers,
@@ -157,7 +242,7 @@ public class Boss extends Entity {
         double dx = targetCenterX - bossCenterX;
         double absDx = Math.abs(dx);
         double absDy = Math.abs((target.getY() + target.getHeight() / 2.0) - (y + height / 2.0));
-        if (absDx < 70.0 || absDx > 260.0) return false;
+        if (absDx < 70.0 || absDx > getDashMaxStartDistance()) return false;
         if (absDy > 95.0) return false;
 
         double dir = dx >= 0 ? 1.0 : -1.0;
@@ -180,8 +265,22 @@ public class Boss extends Entity {
         return false;
     }
 
+    public double getChaseSpeedMultiplier() { return 0.88; }
+
+    public double getDashSpeedMultiplier() { return 1.32; }
+
+    public double getDashDurationMultiplier() { return 1.12; }
+
+    public double getSpellCooldownMultiplier() { return 1.25; }
+
+    public double getDashMaxStartDistance() { return 340.0; }
+
+    protected boolean usesBossMelee() { return true; }
+
+    protected boolean isMovementLockedByAbility() { return false; }
+
     private void tryJumpTowardPlayer() {
-        if (!onGround || jumpCooldown > 0) return;
+        if (isMovementLockedByAbility() || !onGround || jumpCooldown > 0) return;
 
         double bossCenter = x + width / 2.0;
         double playerCenter = player.getX() + player.getWidth() / 2.0;
@@ -269,7 +368,7 @@ public class Boss extends Entity {
      */
     private void drawBody(GraphicsContext gc) {
         // 依狀態選擇顏色
-        Color bodyColor = switch (fsm.getCurrentState()) {
+        Color bodyColor = freezeTimer > 0 ? Color.PALETURQUOISE : switch (fsm.getCurrentState()) {
             case IDLE  -> Color.SLATEGRAY;
             case CHASE -> Color.ORANGERED;
             case DASH  -> Color.GOLD;
@@ -287,6 +386,51 @@ public class Boss extends Entity {
         gc.setFill(Color.BLACK);
         double eyeX = facingRight ? x + width - 18 : x + 10;
         gc.fillOval(eyeX, y + 16, 10, 10);
+        drawMeleeSlash(gc);
+    }
+
+    private void startBossMelee() {
+        meleeFacingRight = player.getX() + player.getWidth() / 2.0 > x + width / 2.0;
+        meleeTimer = MELEE_WINDUP + MELEE_ACTIVE + MELEE_RECOVERY;
+        meleeCooldownTimer = MELEE_COOLDOWN;
+        meleeDamageApplied = false;
+        velocityX *= 0.35;
+    }
+
+    private boolean isBossMeleeActive() {
+        double elapsed = getMeleeElapsed();
+        return elapsed >= MELEE_WINDUP && elapsed <= MELEE_WINDUP + MELEE_ACTIVE;
+    }
+
+    private double getMeleeElapsed() {
+        return MELEE_WINDUP + MELEE_ACTIVE + MELEE_RECOVERY - meleeTimer;
+    }
+
+    private boolean isPlayerInMeleeArc() {
+        Rectangle2D target = player.getHitbox();
+        double originX = meleeFacingRight ? x + width : x;
+        double originY = y + height * 0.55;
+        double targetX = target.getMinX() + target.getWidth() / 2.0;
+        double targetY = target.getMinY() + target.getHeight() / 2.0;
+        double dx = targetX - originX;
+        double dy = targetY - originY;
+        if (meleeFacingRight && dx < -width * 0.25) return false;
+        if (!meleeFacingRight && dx > width * 0.25) return false;
+        double distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance > MELEE_RANGE) return false;
+        double angle = Math.toDegrees(Math.atan2(dy, Math.abs(dx)));
+        return Math.abs(angle) <= MELEE_ARC_DEGREES / 2.0;
+    }
+
+    private void drawMeleeSlash(GraphicsContext gc) {
+        if (!usesBossMelee() || meleeTimer <= 0) return;
+        double originX = meleeFacingRight ? x + width : x;
+        double originY = y + height * 0.55;
+        MeleeSlashRenderer.draw(gc, originX, originY, meleeFacingRight,
+            MELEE_RANGE, MELEE_ARC_DEGREES, getMeleeElapsed(),
+            MELEE_WINDUP + MELEE_ACTIVE + MELEE_RECOVERY,
+            MELEE_WINDUP, MELEE_WINDUP + MELEE_ACTIVE,
+            null, Color.web("#ffb74d"));
     }
 
     /**

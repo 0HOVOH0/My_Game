@@ -4,8 +4,8 @@ import javafx.geometry.Rectangle2D;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.input.KeyCode;
 import javafx.scene.paint.Color;
-import javafx.scene.shape.ArcType;
 import ncu.cs2.my_game.Config;
+import ncu.cs2.my_game.effect.MeleeSlashRenderer;
 import ncu.cs2.my_game.physics.Gravity;
 
 import java.util.ArrayList;
@@ -116,6 +116,8 @@ public class Player extends Entity {
 
     /** 最近一次按 K 失敗是否因為魔力不足，用於 HUD 提示 */
     private boolean lastFireballFailedForMana;
+    private double iceFreezeRangeTimer;
+    private double iceFreezeRangeRadius;
 
     // ── 無敵與閃爍 ───────────────────────────────────────────────────────────
 
@@ -163,6 +165,8 @@ public class Player extends Entity {
         mana           = Config.PLAYER_MAX_MANA;
         fireballCooldownTimer = 0;
         lastFireballFailedForMana = false;
+        iceFreezeRangeTimer = 0;
+        iceFreezeRangeRadius = 0;
         invincibleTimer = 0;
         flickerTimer   = 0;
         flickerVisible  = true;
@@ -199,6 +203,7 @@ public class Player extends Entity {
         updateMana(deltaTime);
         updateFireballs(deltaTime);
         updateIceProjectiles(deltaTime);
+        updateIceFreezeRange(deltaTime);
 
         // 6. 無敵與閃爍計時
         updateInvincibility(deltaTime);
@@ -282,6 +287,12 @@ public class Player extends Entity {
         if (lastFireballFailedForMana && mana >= Config.FIREBALL_MANA_COST) {
             lastFireballFailedForMana = false;
         }
+    }
+
+    private void updateIceFreezeRange(double deltaTime) {
+        if (iceFreezeRangeTimer <= 0) return;
+        iceFreezeRangeTimer -= deltaTime;
+        if (iceFreezeRangeTimer < 0) iceFreezeRangeTimer = 0;
     }
 
     /**
@@ -555,9 +566,28 @@ public class Player extends Entity {
         for (IceProjectile projectile : iceProjectiles) {
             projectile.draw(gc);
         }
+        drawIceFreezeRange(gc);
 
         // 血量條永遠顯示
         drawHpBar(gc);
+    }
+
+    private void drawIceFreezeRange(GraphicsContext gc) {
+        if (iceFreezeRangeTimer <= 0 || iceFreezeRangeRadius <= 0) return;
+        double alpha = Math.min(1.0, iceFreezeRangeTimer / 0.45);
+        double cx = x + width / 2.0;
+        double cy = y + height / 2.0;
+        gc.save();
+        gc.setGlobalAlpha(0.18 * alpha);
+        gc.setFill(Color.DEEPSKYBLUE);
+        gc.fillOval(cx - iceFreezeRangeRadius, cy - iceFreezeRangeRadius,
+            iceFreezeRangeRadius * 2.0, iceFreezeRangeRadius * 2.0);
+        gc.setGlobalAlpha(0.82 * alpha);
+        gc.setStroke(Color.WHITE);
+        gc.setLineWidth(2.5);
+        gc.strokeOval(cx - iceFreezeRangeRadius, cy - iceFreezeRangeRadius,
+            iceFreezeRangeRadius * 2.0, iceFreezeRangeRadius * 2.0);
+        gc.restore();
     }
 
     /**
@@ -589,24 +619,27 @@ public class Player extends Entity {
     }
 
     /**
-     * 繪製攻擊判定框（半透明黃色）。
-     * TODO: 換成攻擊動畫效果後可改為特效粒子。
+     * 繪製與 150 度實際判定同步的揮擊軌跡。
      *
      * @param gc 畫布繪圖上下文
      */
     private void drawAttackBox(GraphicsContext gc) {
-        gc.save();
-        gc.setGlobalAlpha(isAttackDamageActive() ? 0.50 : 0.20);
-        gc.setFill(Color.YELLOW);
-        double centerY = y + height / 2.0;
         boolean attackRight = getAttackFacingRight();
         double centerX = attackRight ? x + width : x;
-        double arcX = centerX - ATTACK_ARC_RADIUS;
-        double arcY = centerY - ATTACK_ARC_RADIUS;
-        gc.fillArc(arcX, arcY, ATTACK_ARC_RADIUS * 2, ATTACK_ARC_RADIUS * 2,
-                   attackRight ? -ATTACK_ARC_DEGREES / 2.0 : 180 - ATTACK_ARC_DEGREES / 2.0,
-                   ATTACK_ARC_DEGREES, ArcType.ROUND);
-        gc.restore();   // 恢復 alpha，避免影響後續繪製
+        double centerY = y + height / 2.0;
+        MeleeSlashRenderer.draw(gc,
+            centerX,
+            centerY,
+            attackRight,
+            ATTACK_ARC_RADIUS,
+            ATTACK_ARC_DEGREES,
+            getAttackElapsed(),
+            ATTACK_DURATION,
+            ATTACK_WINDUP,
+            ATTACK_ACTIVE_END,
+            getAttackFrontBodyBox(attackRight),
+            Color.GOLD
+        );
     }
 
     /**
@@ -658,10 +691,13 @@ public class Player extends Entity {
         double distance = Math.sqrt(dx * dx + dy * dy);
         if (distance <= ATTACK_ARC_RADIUS && isInsideFacingArc(dx, dy)) return true;
 
+        return getAttackFrontBodyBox(attackRight).intersects(target);
+    }
+
+    private Rectangle2D getAttackFrontBodyBox(boolean attackRight) {
         double frontBodyX = attackRight ? x + width / 2.0 : x - ATTACK_FRONT_BODY_REACH;
-        Rectangle2D frontBody = new Rectangle2D(frontBodyX, y,
+        return new Rectangle2D(frontBodyX, y,
             width / 2.0 + ATTACK_FRONT_BODY_REACH, height);
-        return frontBody.intersects(target);
     }
 
     private boolean isInsideFacingArc(double dx, double dy) {
@@ -698,8 +734,12 @@ public class Player extends Entity {
 
     public boolean isAttackDamageActive() {
         if (!isAttacking) return false;
-        double elapsed = ATTACK_DURATION - attackTimer;
+        double elapsed = getAttackElapsed();
         return elapsed >= ATTACK_WINDUP && elapsed <= ATTACK_ACTIVE_END;
+    }
+
+    private double getAttackElapsed() {
+        return ATTACK_DURATION - attackTimer;
     }
 
     /**
@@ -715,6 +755,11 @@ public class Player extends Entity {
     public List<Fireball> getFireballs() { return fireballs; }
 
     public List<IceProjectile> getIceProjectiles() { return iceProjectiles; }
+
+    public void showIceFreezeRange(double radius) {
+        iceFreezeRangeRadius = radius;
+        iceFreezeRangeTimer = 0.45;
+    }
 
     /** 回傳火球術是否可施放 */
     public boolean canCastFireball() {
@@ -780,6 +825,8 @@ public class Player extends Entity {
         attackCooldownTimer = 0;
         fireballs.clear();
         iceProjectiles.clear();
+        iceFreezeRangeTimer = 0;
+        iceFreezeRangeRadius = 0;
         fireballCooldownTimer = 0;
         lastFireballFailedForMana = false;
         invincibleTimer = 0;

@@ -3,8 +3,8 @@ package ncu.cs2.my_game.entity;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
-import javafx.scene.shape.ArcType;
 import ncu.cs2.my_game.Config;
+import ncu.cs2.my_game.effect.MeleeSlashRenderer;
 import ncu.cs2.my_game.physics.Gravity;
 
 /**
@@ -75,6 +75,7 @@ public class Enemy extends Entity {
 
     /** 冰凍/緩速剩餘時間（秒） */
     private double slowTimer;
+    private double freezeTimer;
 
     /** 目前速度倍率，1.0 表示正常速度 */
     private double speedMultiplier;
@@ -118,6 +119,7 @@ public class Enemy extends Entity {
         this.moveDir     = 1.0;   // 初始向右
         this.damageCooldown = 0;
         this.slowTimer = 0;
+        this.freezeTimer = 0;
         this.baseSpeedMultiplier = speedMultiplier;
         this.speedMultiplier = speedMultiplier;
         this.contactDamage = Math.max(1, (int) Math.round(CONTACT_DAMAGE * damageMultiplier));
@@ -148,6 +150,17 @@ public class Enemy extends Entity {
 
         // 1. 套用重力（累加 velocityY）
         Gravity.apply(this, deltaTime);
+
+        if (freezeTimer > 0) {
+            freezeTimer -= deltaTime;
+            if (freezeTimer < 0) freezeTimer = 0;
+            velocityX = 0;
+            x += velocityX * deltaTime;
+            y += velocityY * deltaTime;
+            if (damageCooldown > 0) damageCooldown -= deltaTime;
+            if (chaseJumpCooldown > 0) chaseJumpCooldown -= deltaTime;
+            return;
+        }
 
         // 2. 設定水平速度並更新位置
         if (recoveryTimer > 0) {
@@ -218,6 +231,18 @@ public class Enemy extends Entity {
     public void applySlow(double duration, double multiplier) {
         slowTimer = Math.max(slowTimer, duration);
         speedMultiplier = Math.min(speedMultiplier, baseSpeedMultiplier * multiplier);
+    }
+
+    public void applyFreeze(double duration) {
+        freezeTimer = Math.max(freezeTimer, duration);
+        velocityX = 0;
+        meleeTimer = 0;
+        meleeDamageApplied = false;
+        meleeCooldownTimer = Math.max(meleeCooldownTimer, 0.35);
+    }
+
+    public boolean isFrozen() {
+        return freezeTimer > 0;
     }
 
     public void updateAwareness(Player player, Rectangle2D[] blockers) {
@@ -291,7 +316,14 @@ public class Enemy extends Entity {
     public void recoverFromWall(int collisionSide) {
         if (recoveryTimer > 0.05) return;
 
-        if (collisionSide == 1) {
+        boolean activelyChasing = isChasingPlayer();
+        if (activelyChasing && targetPlayer != null) {
+            double playerCenter = targetPlayer.getX() + targetPlayer.getWidth() / 2.0;
+            double enemyCenter = x + width / 2.0;
+            if (Math.abs(playerCenter - enemyCenter) > 4.0) {
+                moveDir = playerCenter > enemyCenter ? 1.0 : -1.0;
+            }
+        } else if (collisionSide == 1) {
             moveDir = -1.0;
         } else if (collisionSide == 2) {
             moveDir = 1.0;
@@ -299,17 +331,15 @@ public class Enemy extends Entity {
             moveDir *= -1.0;
         }
 
-        boolean activelyChasing = isChasingPlayer() && hasLineOfSight;
         if (!activelyChasing) {
             memoryTimer = 0;
         }
-        recoveryTimer = activelyChasing ? 0.22 : 0.45;
+        recoveryTimer = activelyChasing ? 0.12 : 0.45;
         if (activelyChasing && onGround && chaseJumpCooldown <= 0
-            && targetPlayer != null
-            && targetPlayer.getY() + targetPlayer.getHeight() < y + height - 18.0) {
-            velocityY = Config.JUMP_FORCE * 0.34;
+            && targetPlayer != null) {
+            velocityY = Config.JUMP_FORCE * 0.74;
             onGround = false;
-            chaseJumpCooldown = 0.65;
+            chaseJumpCooldown = 0.80;
         }
     }
 
@@ -320,7 +350,7 @@ public class Enemy extends Entity {
         if (wallAhead == null) return;
         int wallSide = moveDir > 0 ? 1 : 2;
 
-        if (chasing && hasLineOfSight && usesMeleeSlash() && tryVaultWall(wallAhead)) {
+        if (chasing && usesMeleeSlash() && tryVaultWall(wallAhead)) {
             return;
         }
         recoverFromWall(wallSide);
@@ -405,6 +435,7 @@ public class Enemy extends Entity {
      * @return 本次是否觸發了傷害呼叫（冷卻中回傳 false）
      */
     public boolean tryDamagePlayer(Player player) {
+        if (isFrozen()) return false;
         if (!usesMeleeSlash()) {
             if (damageCooldown > 0 || !getHitbox().intersects(player.getHitbox())) return false;
 
@@ -478,7 +509,8 @@ public class Enemy extends Entity {
 
         // 本體（磚紅色）
         // TODO: 換成敵人精靈圖動畫
-        gc.setFill(slowTimer > 0 ? Color.LIGHTBLUE : Color.FIREBRICK);
+        gc.setFill(freezeTimer > 0 ? Color.PALETURQUOISE
+            : slowTimer > 0 ? Color.LIGHTBLUE : Color.FIREBRICK);
         gc.fillRect(x, y, width, height);
 
         // 眼睛指示移動方向（往右眼睛靠右，往左眼睛靠左）
@@ -515,7 +547,7 @@ public class Enemy extends Entity {
     }
 
     private boolean isMeleeActive() {
-        double elapsed = MELEE_WINDUP + MELEE_ACTIVE + MELEE_RECOVERY - meleeTimer;
+        double elapsed = getMeleeElapsed();
         return elapsed >= MELEE_WINDUP && elapsed <= MELEE_WINDUP + MELEE_ACTIVE;
     }
 
@@ -550,16 +582,25 @@ public class Enemy extends Entity {
 
     private void drawMeleeSlash(GraphicsContext gc) {
         if (meleeTimer <= 0) return;
-        gc.save();
-        gc.setGlobalAlpha(isMeleeActive() ? 0.45 : 0.22);
-        gc.setFill(Color.web("#ffdf6a"));
         double originX = moveDir > 0 ? x + width : x;
         double originY = y + height * 0.56;
-        gc.fillArc(originX - MELEE_RANGE, originY - MELEE_RANGE,
-            MELEE_RANGE * 2, MELEE_RANGE * 2,
-            moveDir > 0 ? -MELEE_ARC_DEGREES / 2.0 : 180 - MELEE_ARC_DEGREES / 2.0,
-            MELEE_ARC_DEGREES, ArcType.ROUND);
-        gc.restore();
+        MeleeSlashRenderer.draw(gc,
+            originX,
+            originY,
+            moveDir > 0,
+            MELEE_RANGE,
+            MELEE_ARC_DEGREES,
+            getMeleeElapsed(),
+            MELEE_WINDUP + MELEE_ACTIVE + MELEE_RECOVERY,
+            MELEE_WINDUP,
+            MELEE_WINDUP + MELEE_ACTIVE,
+            null,
+            Color.web("#ffdf6a")
+        );
+    }
+
+    private double getMeleeElapsed() {
+        return MELEE_WINDUP + MELEE_ACTIVE + MELEE_RECOVERY - meleeTimer;
     }
 
     /**

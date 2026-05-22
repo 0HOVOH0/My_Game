@@ -187,4 +187,24 @@ public class TileMap {
     public boolean isInSpawnSafeZone(int tileX, int tileY) {
         return spawnSafeZone != null && spawnSafeZone.containsTile(tileX, tileY);
     }
+
+    public TileMap copy() {
+        TileMap copy = new TileMap(widthTiles, heightTiles);
+        for (int y = 0; y < heightTiles; y++) {
+            for (int x = 0; x < widthTiles; x++) {
+                copy.tiles[y][x] = tiles[y][x];
+            }
+        }
+        copy.mainPlatforms.addAll(mainPlatforms);
+        copy.enemyZones.addAll(enemyZones);
+        copy.rewardZones.addAll(rewardZones);
+        copy.spawnX = spawnX;
+        copy.spawnY = spawnY;
+        copy.exitBounds = exitBounds;
+        copy.validationResult = validationResult;
+        copy.mapValidationResult = mapValidationResult;
+        copy.spawnSafeZone = spawnSafeZone;
+        copy.exitSafeZone = exitSafeZone;
+        return copy;
+    }
 }

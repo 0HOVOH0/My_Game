@@ -23,7 +23,7 @@ public class StageGenerator {
             default -> 2;
         };
         double dropBonus = type == StageType.ELITE ? 0.18 : type == StageType.EXPLORATION ? 0.08 : 0.0;
-        return new StageDefinition(type, generatedCount, supplies, dropBonus);
+        return new StageDefinition(type, generatedCount, supplies, dropBonus, random.nextLong());
     }
 
     private StageType rollType() {

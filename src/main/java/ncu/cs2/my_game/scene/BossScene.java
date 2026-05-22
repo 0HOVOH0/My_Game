@@ -88,10 +88,10 @@ public class BossScene extends AnimationTimer {
     private static final double FLASH_DURATION = 0.25;
 
     /** DASH 衝刺命中玩家的傷害值 */
-    private static final int BOSS_DASH_DAMAGE = 10;
+    private static final int BOSS_DASH_DAMAGE = 7;
 
     /** Boss 身體接觸玩家的傷害值（Phase 1 起生效） */
-    private static final int BOSS_CONTACT_DAMAGE = 6;
+    private static final int BOSS_CONTACT_DAMAGE = 4;
 
     /** Boss 身體接觸傷害的冷卻時間（秒） */
     private static final double BOSS_CONTACT_COOLDOWN = 0.8;
@@ -217,6 +217,7 @@ public class BossScene extends AnimationTimer {
     private long lastNano = 0;
 
     private double playerPlatformDropTimer = 0;
+    private double bossPlatformDropTimer = 0;
     private Rectangle2D bossExitDoor = null;
     private double fps = 0;
 
@@ -265,19 +266,15 @@ public class BossScene extends AnimationTimer {
             new Rectangle2D(515 + bossRand(-16, 12), 326 + bossRand(-8, 10), bossPlatformWidth(6, 8), PLAT_H),
             new Rectangle2D(335 + bossRand(-14, 14), 202 + bossRand(-6, 8), bossPlatformWidth(5, 7), PLAT_H),
         };
-        covers = createBossCovers(new Rectangle2D[] {
-            new Rectangle2D(150 + bossRand(-12, 12), GROUND_Y - 64, 104, 64),
-            new Rectangle2D(360 + bossRand(-10, 12), GROUND_Y - 76, 112, 76),
-            new Rectangle2D(590 + bossRand(-12, 12), GROUND_Y - 66, 104, 66)
-        });
-        visionBlockers = mergeBlockers(platforms, covers);
+        covers = new Rectangle2D[0];
+        visionBlockers = platforms;
         dashSurfaces = mergeBlockers(new Rectangle2D[] { ground }, visionBlockers);
         navigationSurfaces = dashSurfaces;
         bossType = Main.getOrCreateBossType();
         SceneTransitionManager.setBossFightState(BossFightState.FIGHTING);
         boss = createBoss();
-        itemSpawnManager = new ItemSpawnManager(ground, platforms, covers);
-        goldSpawnManager = new GoldSpawnManager(ground, platforms, covers);
+        itemSpawnManager = new ItemSpawnManager(ground, platforms);
+        goldSpawnManager = new GoldSpawnManager(ground, platforms);
         inventoryOpen = false;
         selectedInventorySlot = 0;
 
@@ -372,6 +369,8 @@ public class BossScene extends AnimationTimer {
                 bossDropHandled = true;
                 spawnBossDrops();
                 bossExitDoor = createBossExitDoor();
+                bombs.clear();
+                effectManager.clear();
                 boss.handleDeathCleanup();
                 BossUIManager.clearBossUI();
             }
@@ -521,6 +520,11 @@ public class BossScene extends AnimationTimer {
      * Boss 只與地板互動（不踩平台），落地後清除垂直速度。
      */
     private void resolveBossGround(double dt) {
+        if (bossPlatformDropTimer > 0) {
+            bossPlatformDropTimer -= dt;
+            if (bossPlatformDropTimer < 0) bossPlatformDropTimer = 0;
+        }
+
         boolean bossOnSolid = false;
         for (Rectangle2D cover : covers) {
             int result = Collision.resolveSolid(boss, cover);
@@ -533,15 +537,24 @@ public class BossScene extends AnimationTimer {
             boss.setOnGround(true);
         } else {
             boolean bossOnPlatform = false;
-            for (Rectangle2D platform : platforms) {
-                if (Collision.checkPlatform(boss, platform)) {
-                    boss.setY(platform.getMinY() - boss.getHeight());
-                    boss.setOnGround(true);
-                    bossOnPlatform = true;
-                    break;
-                }
+            if (bossPlatformDropTimer <= 0 && boss.shouldDropFromPlatform()) {
+                bossPlatformDropTimer = 0.28;
+                boss.setY(boss.getY() + 8);
+                boss.setOnGround(false);
             }
-            if (!bossOnPlatform) {
+            if (bossPlatformDropTimer <= 0) {
+                for (Rectangle2D platform : platforms) {
+                    if (Collision.checkPlatform(boss, platform)) {
+                        boss.setY(platform.getMinY() - boss.getHeight());
+                        boss.setOnGround(true);
+                        bossOnPlatform = true;
+                        break;
+                    }
+                }
+                if (!bossOnPlatform) {
+                    boss.setOnGround(false);
+                }
+            } else {
                 boss.setOnGround(false);
             }
         }
@@ -602,7 +615,7 @@ public class BossScene extends AnimationTimer {
 
     private Boss createBoss() {
         int stage = Math.max(1, Main.getStageNumber());
-        int maxHp = (int) Math.round(Config.BOSS_MAX_HP * 1.25 * (1.0 + stage * 0.10));
+        int maxHp = (int) Math.round(Config.BOSS_MAX_HP * 1.05 * (1.0 + stage * 0.08));
         return switch (bossType) {
             case GROUND_SPIKE -> new GroundSpikeBoss(700, 340, player, maxHp, GROUND_Y, dashSurfaces);
             case SUMMONER -> new SummonerBoss(700, 340, player, maxHp, GROUND_Y, dashSurfaces);
@@ -741,6 +754,7 @@ public class BossScene extends AnimationTimer {
         bombs.clear();
         effectManager.clear();
         boss = createBoss();
+        bossPlatformDropTimer = 0;
         SceneTransitionManager.setCurrentBossType(bossFightSnapshot.getBossType());
         SceneTransitionManager.setBossFightSnapshotActive(true);
 
@@ -1026,11 +1040,23 @@ public class BossScene extends AnimationTimer {
     }
 
     private void addPickup(PickupType type, double x, double y, int quantity) {
+        itemSpawnManager.setForbiddenZones(currentSpikeHazards());
         pickupItems.add(itemSpawnManager.spawn(type, x, y, quantity, pickupItems));
     }
 
     private void addGold(int amount, double x, double y) {
+        goldSpawnManager.setForbiddenZones(currentSpikeHazards());
         goldPickups.add(goldSpawnManager.spawn(amount, x, y, pickupItems, goldPickups));
+    }
+
+    private List<Rectangle2D> currentSpikeHazards() {
+        List<Rectangle2D> hazards = new ArrayList<>();
+        for (GroundSpike spike : boss.getGroundSpikes()) {
+            if (spike.isAlive()) {
+                hazards.add(spike.getHitbox());
+            }
+        }
+        return hazards;
     }
 
     private void checkGoldPickups() {
@@ -1051,6 +1077,10 @@ public class BossScene extends AnimationTimer {
                 applyBombDamage(bomb);
                 bomb.markDamageApplied();
             }
+        }
+        if (boss.getCurrentState() == BossState.DEAD) {
+            bombs.clear();
+            return;
         }
         bombs.removeIf(bomb -> !bomb.isAlive());
     }
@@ -1265,7 +1295,7 @@ public class BossScene extends AnimationTimer {
         if (Collision.checkAABB(player.getHitbox(), inflate(bossExitDoor, 14))) {
             gc.setFill(Color.WHITE);
             gc.setFont(Font.font(14));
-            gc.fillText("Press W / Up / Enter", bossExitDoor.getMinX() - 46, bossExitDoor.getMinY() - 12);
+            gc.fillText("Press Enter", bossExitDoor.getMinX() - 24, bossExitDoor.getMinY() - 12);
         }
     }
 
@@ -1423,7 +1453,7 @@ public class BossScene extends AnimationTimer {
     }
 
     private boolean isPortalEnterKey(KeyCode key) {
-        return key == KeyCode.W || key == KeyCode.UP || key == KeyCode.ENTER;
+        return key == KeyCode.ENTER;
     }
 
     private String debugInventorySlots() {

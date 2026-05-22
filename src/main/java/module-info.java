@@ -2,6 +2,7 @@ module ncu.cs2.my_game {
     requires javafx.controls;
     requires javafx.fxml;
     requires javafx.graphics;  // GraphicsContext、Rectangle2D 所需
+    requires java.desktop;     // 地圖池 PNG 預覽輸出
 
     opens ncu.cs2.my_game to javafx.fxml;
     opens ncu.cs2.my_game.controller to javafx.fxml;

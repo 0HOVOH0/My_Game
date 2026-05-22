@@ -1,11 +1,8 @@
 package ncu.cs2.my_game.effect;
 
 import javafx.scene.canvas.GraphicsContext;
-import javafx.scene.image.Image;
-import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.entity.Player;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -14,18 +11,10 @@ import java.util.List;
  */
 public class EffectManager {
     private final List<AnimatedEffect> effects = new ArrayList<>();
-    private final Image slashImage;
-    private double slashCooldown;
 
-    public EffectManager() {
-        slashImage = loadSlashImage();
-    }
+    public EffectManager() {}
 
     public void update(double dt) {
-        if (slashCooldown > 0) {
-            slashCooldown -= dt;
-            if (slashCooldown < 0) slashCooldown = 0;
-        }
         for (AnimatedEffect effect : effects) {
             effect.update(dt);
         }
@@ -39,13 +28,9 @@ public class EffectManager {
     }
 
     public void playSlash(Player player) {
-        if (slashCooldown > 0) return;
-        if (slashImage != null && !slashImage.isError()) {
-            effects.add(AttackEffect.slash(slashImage, player));
-        } else {
-            return;
-        }
-        slashCooldown = Config.SLASH_EFFECT_COOLDOWN;
+        // Slash visuals are now drawn by Player/Enemy with the same 150-degree
+        // timing and reach as the melee hitbox. Keep this hook as a no-op so
+        // scenes do not spawn the older, wider GIF slash on top.
     }
 
     public void clear() {
@@ -53,26 +38,10 @@ public class EffectManager {
             effect.destroy();
         }
         effects.clear();
-        slashCooldown = 0;
     }
 
     public int getActiveEffectCount() {
         return effects.size();
     }
 
-    private Image loadSlashImage() {
-        try {
-            var stream = EffectManager.class.getResourceAsStream(Config.SLASH_EFFECT_RESOURCE);
-            if (stream != null) {
-                return new Image(stream);
-            }
-            File fallback = new File(Config.SLASH_EFFECT_FALLBACK_FILE);
-            if (fallback.exists()) {
-                return new Image(fallback.toURI().toString());
-            }
-        } catch (RuntimeException ignored) {
-            // Missing visual asset should not break combat.
-        }
-        return null;
-    }
 }

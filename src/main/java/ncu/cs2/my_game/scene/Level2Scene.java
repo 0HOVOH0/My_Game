@@ -1,6 +1,7 @@
 package ncu.cs2.my_game.scene;
 
 import javafx.animation.AnimationTimer;
+import javafx.geometry.Point2D;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Scene;
 import javafx.scene.canvas.Canvas;
@@ -23,13 +24,13 @@ import ncu.cs2.my_game.entity.Player;
 import ncu.cs2.my_game.entity.RangedEnemy;
 import ncu.cs2.my_game.item.Inventory;
 import ncu.cs2.my_game.item.InventorySlot;
+import ncu.cs2.my_game.item.ItemSpawnResolver;
 import ncu.cs2.my_game.item.ItemSpawnManager;
 import ncu.cs2.my_game.item.PickupItem;
 import ncu.cs2.my_game.item.PickupType;
 import ncu.cs2.my_game.item.UseContext;
 import ncu.cs2.my_game.map.DungeonMapRenderer;
 import ncu.cs2.my_game.map.MapValidationResult;
-import ncu.cs2.my_game.map.PlatformDungeonGenerator;
 import ncu.cs2.my_game.map.PlatformValidationResult;
 import ncu.cs2.my_game.map.TileMap;
 import ncu.cs2.my_game.map.TileType;
@@ -211,7 +212,7 @@ public class Level2Scene extends AnimationTimer {
 
         Scene javafxScene = CanvasSceneSupport.createScaledCanvasScene(stage, canvas);
         Fireball.setWorldBounds(WORLD_WIDTH, Config.WINDOW_HEIGHT);
-        tileMap = new PlatformDungeonGenerator().generateLevel(2);
+        tileMap = Main.pickNormalStageMap();
 
         // ── 初始化玩家（帶入 Level1 結束時的血量） ────────────────────────────
         player = new Player(tileMap.getSpawnX(), tileMap.getSpawnY());
@@ -245,6 +246,8 @@ public class Level2Scene extends AnimationTimer {
         enemyDropsHandled = new boolean[enemies.length];
         itemSpawnManager = new ItemSpawnManager(ground, platforms, covers);
         goldSpawnManager = new GoldSpawnManager(ground, platforms, covers);
+        itemSpawnManager.setForbiddenZones(createHazardForbiddenZones());
+        goldSpawnManager.setForbiddenZones(createHazardForbiddenZones());
         inventoryOpen = false;
         selectedInventorySlot = 0;
 
@@ -259,7 +262,7 @@ public class Level2Scene extends AnimationTimer {
 
         // ── 加血道具（放在 P3 中央偏右，玩家進到 P3 後容易看到）───────────────
         // P3 頂面 y=355，道具底部對齊平台：item.y = 355 - ITEM_SIZE = 335
-        double[] healthPoint = randomPickupPoint(1, Math.min(6, platforms.length - 1));
+        double[] healthPoint = safeLegacyHealthPoint(randomPickupPoint(1, Math.min(6, platforms.length - 1)));
         healthItem = new Rectangle2D(healthPoint[0], healthPoint[1], ITEM_SIZE, ITEM_SIZE);
 
         initialSnapshot = new StageSnapshot(
@@ -574,9 +577,24 @@ public class Level2Scene extends AnimationTimer {
     }
 
     private Rectangle2D[] createProceduralPlatforms() {
-        return tileMap.getMainPlatforms().stream()
-            .map(p -> new Rectangle2D(p.getMinX(), p.getMinY(), p.getWidth(), PLAT_H))
-            .toArray(Rectangle2D[]::new);
+        List<Rectangle2D> actualPlatforms = new ArrayList<>();
+        for (int y = 0; y < tileMap.getHeightTiles(); y++) {
+            int runStart = -1;
+            for (int x = 0; x <= tileMap.getWidthTiles(); x++) {
+                boolean standablePlatform = x < tileMap.getWidthTiles()
+                    && tileMap.getTile(x, y).isStandable()
+                    && !tileMap.getTile(x, y).isSolid();
+                if (standablePlatform && runStart < 0) {
+                    runStart = x;
+                } else if (!standablePlatform && runStart >= 0) {
+                    int length = x - runStart;
+                    actualPlatforms.add(new Rectangle2D(runStart * TileMap.TILE_SIZE,
+                        y * TileMap.TILE_SIZE, length * TileMap.TILE_SIZE, PLAT_H));
+                    runStart = -1;
+                }
+            }
+        }
+        return actualPlatforms.toArray(Rectangle2D[]::new);
     }
 
     private double rand(double min, double max) {
@@ -640,8 +658,8 @@ public class Level2Scene extends AnimationTimer {
         List<Rectangle2D> generated = new ArrayList<>();
         for (int y = 0; y < tileMap.getHeightTiles(); y++) {
             for (int x = 0; x < tileMap.getWidthTiles(); x++) {
-                if (tileMap.getTile(x, y) == TileType.WALL) {
-                    addCoverIfValid(generated, tileMap.tileBounds(x, y));
+                if (tileMap.getTile(x, y).isSolid()) {
+                    generated.add(tileMap.tileBounds(x, y));
                 }
             }
         }
@@ -996,11 +1014,32 @@ public class Level2Scene extends AnimationTimer {
     }
 
     private void addPickup(PickupType type, double x, double y, int quantity) {
+        itemSpawnManager.setForbiddenZones(createHazardForbiddenZones());
         pickupItems.add(itemSpawnManager.spawn(type, x, y, quantity, pickupItems));
     }
 
     private void addGold(int amount, double x, double y) {
+        goldSpawnManager.setForbiddenZones(createHazardForbiddenZones());
         goldPickups.add(goldSpawnManager.spawn(amount, x, y, pickupItems, goldPickups));
+    }
+
+    private List<Rectangle2D> createHazardForbiddenZones() {
+        List<Rectangle2D> zones = new ArrayList<>();
+        for (int y = 0; y < tileMap.getHeightTiles(); y++) {
+            for (int x = 0; x < tileMap.getWidthTiles(); x++) {
+                if (tileMap.getTile(x, y).isHazardous()) {
+                    zones.add(tileMap.tileBounds(x, y));
+                }
+            }
+        }
+        return zones;
+    }
+
+    private double[] safeLegacyHealthPoint(double[] preferred) {
+        ItemSpawnResolver resolver = new ItemSpawnResolver(ground, platforms, covers);
+        resolver.setForbiddenZones(createHazardForbiddenZones());
+        Point2D point = resolver.findValidSpawnPosition(preferred[0], preferred[1], pickupItems);
+        return new double[] { point.getX(), point.getY() };
     }
 
     private void addExplorationSupplies() {
@@ -1441,7 +1480,7 @@ public class Level2Scene extends AnimationTimer {
         if (!isNearGoalDoor()) return;
         gc.setFill(Color.WHITE);
         gc.setFont(Font.font(14));
-        gc.fillText("Press W / Up / Enter", goalDoor.getMinX() - 42, goalDoor.getMinY() - 12);
+        gc.fillText("Press Enter", goalDoor.getMinX() - 24, goalDoor.getMinY() - 12);
     }
 
     private boolean isNearGoalDoor() {
@@ -1454,7 +1493,7 @@ public class Level2Scene extends AnimationTimer {
     }
 
     private boolean isPortalEnterKey(KeyCode key) {
-        return key == KeyCode.W || key == KeyCode.UP || key == KeyCode.ENTER;
+        return key == KeyCode.ENTER;
     }
 
     private String debugInventorySlots() {

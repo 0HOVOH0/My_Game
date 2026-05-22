@@ -22,6 +22,10 @@ public class ItemSpawnManager {
         this.resolver = new ItemSpawnResolver(ground, platforms, solidObstacles);
     }
 
+    public void setForbiddenZones(List<Rectangle2D> forbiddenZones) {
+        resolver.setForbiddenZones(forbiddenZones);
+    }
+
     /**
      * 產生道具，若目標位置重疊或不安全會自動找附近位置。
      */

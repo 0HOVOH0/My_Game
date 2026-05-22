@@ -13,6 +13,8 @@ import ncu.cs2.my_game.scene.Level1Scene;
 import ncu.cs2.my_game.scene.Level2Scene;
 import ncu.cs2.my_game.scene.SceneTransitionManager;
 import ncu.cs2.my_game.scene.ShopScene;
+import ncu.cs2.my_game.map.MapPoolManager;
+import ncu.cs2.my_game.map.TileMap;
 import ncu.cs2.my_game.stage.StageDefinition;
 import ncu.cs2.my_game.stage.StageGenerator;
 import ncu.cs2.my_game.item.Inventory;
@@ -55,6 +57,9 @@ public class Main extends Application {
 
     /** 隨機關卡生成器。 */
     private static StageGenerator stageGenerator = new StageGenerator();
+
+    /** 一般關合法地圖池。 */
+    private static MapPoolManager mapPoolManager = new MapPoolManager();
 
     /** 目前進度關卡編號。 */
     private static int stageNumber = 1;
@@ -133,6 +138,8 @@ public class Main extends Application {
         inventory       = new Inventory();
         currencyManager = new CurrencyManager();
         stageGenerator  = new StageGenerator();
+        mapPoolManager  = new MapPoolManager();
+        mapPoolManager.generateNormalMapPool();
         stageNumber     = 1;
         normalStagesInCycle = 1;
         lastBossType = null;
@@ -258,6 +265,14 @@ public class Main extends Application {
 
     public static StageDefinition getCurrentStageDefinition() {
         return nextStageDefinition;
+    }
+
+    public static TileMap pickNormalStageMap() {
+        return mapPoolManager.pickNormalMap();
+    }
+
+    public static String getMapPoolPreviewDirectory() {
+        return mapPoolManager.getPreviewDirectory().toAbsolutePath().toString();
     }
 
     public static void advanceAfterBoss() {

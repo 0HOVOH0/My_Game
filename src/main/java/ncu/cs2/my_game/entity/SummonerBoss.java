@@ -12,7 +12,12 @@ public class SummonerBoss extends Boss {
     private final List<Enemy> minions = new ArrayList<>();
     private final double groundY;
     private final Rectangle2D[] surfaces;
-    private double summonCooldown = 2.0;
+    private double summonCooldown = 3.0;
+    private boolean summoning;
+    private boolean summonReleased;
+    private double summonCastTimer;
+    private static final double SUMMON_WINDUP = 0.45;
+    private static final double SUMMON_DURATION = 1.05;
 
     public SummonerBoss(double x, double y, Player player, int maxHp, double groundY) {
         this(x, y, player, maxHp, groundY, new Rectangle2D[0]);
@@ -37,10 +42,23 @@ public class SummonerBoss extends Boss {
             return;
         }
 
+        if (summoning) {
+            summonCastTimer -= deltaTime;
+            if (!summonReleased && summonCastTimer <= SUMMON_DURATION - SUMMON_WINDUP) {
+                summonMinions();
+                summonReleased = true;
+            }
+            if (summonCastTimer <= 0) {
+                summoning = false;
+                summonReleased = false;
+                summonCooldown = 6.8;
+            }
+            return;
+        }
+
         summonCooldown -= deltaTime;
-        if (summonCooldown <= 0 && minions.size() < 4) {
-            summonMinions();
-            summonCooldown = 5.6;
+        if (summonCooldown <= 0 && minions.size() < 4 && isOnGround() && !isFrozen()) {
+            startSummonMode();
         }
     }
 
@@ -53,6 +71,11 @@ public class SummonerBoss extends Boss {
         if (isAlive()) {
             gc.setFill(Color.MEDIUMSEAGREEN);
             gc.fillOval(getX() + 14, getY() + 10, getWidth() - 28, 16);
+            if (summoning) {
+                gc.setStroke(Color.LIMEGREEN);
+                gc.setLineWidth(3);
+                gc.strokeOval(getX() - 10, getY() - 6, getWidth() + 20, getHeight() + 12);
+            }
         }
     }
 
@@ -70,45 +93,103 @@ public class SummonerBoss extends Boss {
         minions.clear();
     }
 
+    @Override
+    public double getChaseSpeedMultiplier() { return 0.80; }
+
+    @Override
+    public double getDashSpeedMultiplier() { return 0.82; }
+
+    @Override
+    public double getSpellCooldownMultiplier() { return 1.45; }
+
+    @Override
+    public double getDashMaxStartDistance() { return 240.0; }
+
+    @Override
+    protected boolean usesBossMelee() { return false; }
+
+    @Override
+    protected boolean isMovementLockedByAbility() {
+        return summoning;
+    }
+
+    private void startSummonMode() {
+        summoning = true;
+        summonReleased = false;
+        summonCastTimer = SUMMON_DURATION;
+        setVelocityX(0);
+    }
+
     private void summonMinions() {
         Rectangle2D surface = chooseSummonSurface();
-        double top = surface == null ? groundY : surface.getMinY();
-        double minX = surface == null ? 20 : surface.getMinX() + 8;
-        double maxX = surface == null ? 720 : surface.getMaxX() - Enemy.ENEMY_W - 8;
-        double leftX = Math.max(minX, Math.min(getX() - 90, maxX));
-        double rightX = Math.max(minX, Math.min(getX() + getWidth() + 45, maxX));
-        addMinion(leftX, top, minX, maxX);
+        if (surface == null) return;
+        double top = surface.getMinY();
+        double minX = surface.getMinX() + 8;
+        double maxX = surface.getMaxX() - Enemy.ENEMY_W - 8;
+        double leftX = findValidSpawnX(surface, Math.max(minX, Math.min(getX() - 70, maxX)));
+        double rightX = findValidSpawnX(surface, Math.max(minX, Math.min(getX() + getWidth() + 36, maxX)));
+        if (!Double.isNaN(leftX)) addMinion(leftX, top, minX, maxX);
         if (minions.size() < 4) {
-            addMinion(rightX, top, minX, maxX);
+            if (!Double.isNaN(rightX)) addMinion(rightX, top, minX, maxX);
         }
     }
 
     private void addMinion(double spawnX, double surfaceTop, double minX, double maxX) {
         double patrolLeft = Math.max(minX, spawnX - 30);
         double patrolRight = Math.min(maxX + Enemy.ENEMY_W, spawnX + 120);
-        boolean ranged = Math.random() < 0.4;
+        boolean ranged = Math.random() < 0.22;
+        Enemy minion;
         if (ranged) {
-            minions.add(new RangedEnemy(spawnX, surfaceTop - Enemy.ENEMY_H,
-                patrolLeft, patrolRight, player, 0.45, 0.65, 0.9, 1.0));
+            minion = new RangedEnemy(spawnX, surfaceTop - Enemy.ENEMY_H,
+                patrolLeft, patrolRight, player, 0.20, 0.45, 0.82, 0.9);
         } else {
-            minions.add(new Enemy(spawnX, surfaceTop - Enemy.ENEMY_H,
-                patrolLeft, patrolRight, 0.55, 0.75, 1.0));
+            minion = new Enemy(spawnX, surfaceTop - Enemy.ENEMY_H,
+                patrolLeft, patrolRight, 0.42, 0.50, 0.85);
         }
+        minion.setMaxHp(18);
+        minion.setHp(18);
+        minions.add(minion);
     }
 
     private Rectangle2D chooseSummonSurface() {
         Rectangle2D best = null;
         double bestScore = Double.MAX_VALUE;
-        double playerCenter = player.getX() + player.getWidth() / 2.0;
+        double bossCenter = getX() + getWidth() / 2.0;
+        double bossFeet = getY() + getHeight();
         for (Rectangle2D surface : surfaces) {
-            if (surface.getWidth() < 68.0) continue;
+            if (surface.getWidth() < 86.0) continue;
             double center = surface.getMinX() + surface.getWidth() / 2.0;
-            double score = Math.abs(center - playerCenter) + Math.random() * 120.0;
+            double samePlatformBonus = Math.abs(surface.getMinY() - bossFeet) < 24.0 ? -180.0 : 0.0;
+            double verticalCost = Math.abs(surface.getMinY() - bossFeet) * 1.35;
+            double horizontalCost = Math.abs(center - bossCenter);
+            double score = samePlatformBonus + horizontalCost + verticalCost + Math.random() * 45.0;
             if (score < bestScore) {
                 bestScore = score;
                 best = surface;
             }
         }
         return best;
+    }
+
+    private double findValidSpawnX(Rectangle2D surface, double preferredX) {
+        double minX = surface.getMinX() + 8;
+        double maxX = surface.getMaxX() - Enemy.ENEMY_W - 8;
+        double[] offsets = {0, -42, 42, -84, 84, -126, 126};
+        for (double offset : offsets) {
+            double x = Math.max(minX, Math.min(preferredX + offset, maxX));
+            Rectangle2D hitbox = new Rectangle2D(x, surface.getMinY() - Enemy.ENEMY_H,
+                Enemy.ENEMY_W, Enemy.ENEMY_H);
+            if (isSpawnClear(hitbox)) {
+                return x;
+            }
+        }
+        return Double.NaN;
+    }
+
+    private boolean isSpawnClear(Rectangle2D hitbox) {
+        for (Enemy minion : minions) {
+            if (minion.isAlive() && hitbox.intersects(minion.getHitbox())) return false;
+        }
+        return !hitbox.intersects(getHitbox());
     }
 }

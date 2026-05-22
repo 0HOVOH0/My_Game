@@ -41,7 +41,7 @@ public class RangedEnemy extends Enemy {
         for (Fireball projectile : projectiles) {
             projectile.update(deltaTime);
         }
-        if (!isAlive()) return;
+        if (!isAlive() || isFrozen()) return;
 
         keepDistance(deltaTime);
 

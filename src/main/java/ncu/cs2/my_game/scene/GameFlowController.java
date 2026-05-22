@@ -59,7 +59,9 @@ public class GameFlowController {
             return true;
         }
         if (key == KeyCode.Q) {
-            quitGame.run();
+            if (paused) {
+                quitGame.run();
+            }
             event.consume();
             return true;
         }

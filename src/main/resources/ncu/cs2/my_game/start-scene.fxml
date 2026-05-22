@@ -32,7 +32,8 @@
         <Label text="" prefHeight="28"/>
 
         <!-- 開始遊戲按鈕 -->
-        <Button text="[ 開始遊戲 ]"
+        <Button fx:id="startButton"
+                text="[ 開始遊戲 ]"
                 onAction="#onStartGame"
                 prefWidth="240" prefHeight="52"
                 style="-fx-font-size: 18px; -fx-font-family: monospace; -fx-background-color: #08151f; -fx-text-fill: #00e5ff; -fx-border-color: #00e5ff; -fx-border-width: 1.5; -fx-border-radius: 3; -fx-background-radius: 3; -fx-cursor: hand;"/>

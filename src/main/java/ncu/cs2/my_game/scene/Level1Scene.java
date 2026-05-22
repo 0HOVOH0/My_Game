@@ -315,7 +315,7 @@ public class Level1Scene extends AnimationTimer {
         if (!isNearGoalDoor()) return;
         gc.setFill(Color.WHITE);
         gc.setFont(Font.font(14));
-        gc.fillText("Press W / Up / Enter", goalDoor.getMinX() - 42, goalDoor.getMinY() - 12);
+        gc.fillText("Press Enter", goalDoor.getMinX() - 24, goalDoor.getMinY() - 12);
     }
 
     private boolean isNearGoalDoor() {
@@ -324,7 +324,7 @@ public class Level1Scene extends AnimationTimer {
     }
 
     private boolean isPortalEnterKey(KeyCode key) {
-        return key == KeyCode.W || key == KeyCode.UP || key == KeyCode.ENTER;
+        return key == KeyCode.ENTER;
     }
 
     private void cleanup() {

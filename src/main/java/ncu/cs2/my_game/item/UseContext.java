@@ -42,6 +42,31 @@ public class UseContext {
         player.castIceProjectile();
     }
 
+    public void freezeEnemiesNearPlayer(double radius, double enemyDuration, double bossDuration) {
+        player.showIceFreezeRange(radius);
+        double cx = player.getX() + player.getWidth() / 2.0;
+        double cy = player.getY() + player.getHeight() / 2.0;
+
+        if (enemies != null) {
+            for (Enemy enemy : enemies) {
+                if (enemy != null && enemy.isAlive() && distance(cx, cy, enemy) <= radius) {
+                    enemy.applyFreeze(enemyDuration);
+                }
+            }
+        }
+
+        if (boss != null) {
+            if (boss.isAlive() && distance(cx, cy, boss) <= radius) {
+                boss.applyFreeze(bossDuration);
+            }
+            for (Enemy minion : boss.getMinions()) {
+                if (minion != null && minion.isAlive() && distance(cx, cy, minion) <= radius) {
+                    minion.applyFreeze(enemyDuration);
+                }
+            }
+        }
+    }
+
     /**
      * 對玩家附近的敵人造成範圍傷害。
      */
