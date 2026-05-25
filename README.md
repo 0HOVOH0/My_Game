@@ -239,6 +239,14 @@ Bomb 使用後會在玩家位置生成 `BombEntity`，2 秒後爆炸，半徑 15
 
 ## Changelog
 
+### v1.7 — UI 介面改善合併
+- 統一所有場景使用 `HudRenderer.drawGameOverOverlay()`，以 `TextAlignment.CENTER` 取代硬編碼像素偏移，文字置中精確
+- GAME OVER 畫面新增副標題提示（Level 1/2 說明重啟範圍，Boss 關說明狀態恢復）
+- 所有場景（Level 1、Level 2、ShopScene、BossScene）底部新增固定操作提示欄
+- Level 2 與 BossScene 新增拾取浮動提示，撿到藥水/卷軸/金幣時顯示金色浮字 1.4 秒
+- 終點門提示改為使用 `HudRenderer.drawGoalPrompt()`，帶黑色底框與 X 軸邊界夾緊，移出鏡頭 translate 區塊避免右端溢出
+- 開始畫面操作說明更新為雙行完整版（含道具快捷鍵 U/I/O、背包 B、暫停 P、重試 R）
+
 ### v1.6.7
 - 修復 Boss 死亡後炸彈爆炸特效殘留
 - 地刺 Boss 施法時仍更新重力、投射物與受傷狀態，避免卡空中或白色殘留

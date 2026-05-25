@@ -45,8 +45,10 @@
                 style="-fx-font-size: 18px; -fx-font-family: monospace; -fx-background-color: #08151f; -fx-text-fill: #2e5070; -fx-border-color: #1a3050; -fx-border-width: 1.5; -fx-border-radius: 3; -fx-background-radius: 3; -fx-cursor: hand;"/>
 
         <!-- 底部說明 -->
-        <Label text="WASD 移動　Space / W 跳躍　J 攻擊"
-               style="-fx-font-size: 12px; -fx-text-fill: #1a3050; -fx-font-family: monospace;"/>
+        <Label text="[A/D] 移動　[W/Space] 跳躍　[S] 穿台/蹲下　[J] 近戰　[K] 火球"
+               style="-fx-font-size: 11px; -fx-text-fill: #1a3a5a; -fx-font-family: monospace;"/>
+        <Label text="[U/I/O] 使用道具　[B] 背包　[P] 暫停　[R] 死後重試"
+               style="-fx-font-size: 11px; -fx-text-fill: #1a3a5a; -fx-font-family: monospace;"/>
     </VBox>
 
 </StackPane>

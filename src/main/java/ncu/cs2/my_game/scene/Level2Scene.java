@@ -9,7 +9,6 @@ import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.Pane;
 import javafx.scene.paint.Color;
-import javafx.scene.text.Font;
 import javafx.stage.Stage;
 import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.Main;
@@ -193,6 +192,8 @@ public class Level2Scene extends AnimationTimer {
 
     private double playerPlatformDropTimer = 0;
     private double fps = 0;
+    private String pickupNotice = "";
+    private double pickupNoticeTimer = 0;
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -420,6 +421,8 @@ public class Level2Scene extends AnimationTimer {
 
         // 13. 終點門判定
         checkGoalDoor();
+
+        if (pickupNoticeTimer > 0) pickupNoticeTimer -= dt;
     }
 
     /**
@@ -1127,6 +1130,7 @@ public class Level2Scene extends AnimationTimer {
             if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
                 if (inventory.add(item.getType(), item.getQuantity())) {
                     item.markPickedUp();
+                    showPickupNotice("+" + item.getType().getHudLabel());
                 }
             }
         }
@@ -1139,6 +1143,7 @@ public class Level2Scene extends AnimationTimer {
             if (Collision.checkAABB(player.getHitbox(), gold.getHitbox())) {
                 Main.addGold(gold.getAmount());
                 gold.markPickedUp();
+                showPickupNotice("+" + gold.getAmount() + " Gold");
             }
         }
         goldPickups.removeIf(GoldPickup::isPickedUp);
@@ -1216,6 +1221,7 @@ public class Level2Scene extends AnimationTimer {
             // 回復血量，setHp 內部自動限制不超過 maxHp
             player.setHp(player.getHp() + ITEM_HEAL);
             healthItem = null;   // 標記為已拾取
+            showPickupNotice("+" + ITEM_HEAL + " HP");
         }
     }
 
@@ -1291,8 +1297,13 @@ public class Level2Scene extends AnimationTimer {
         // 8. 玩家（最後繪製，顯示在最上層）
         player.draw(gc);
         effectManager.draw(gc);
-        drawGoalPrompt(gc);
         gc.restore();
+
+        if (isNearGoalDoor()) {
+            HudRenderer.drawGoalPrompt(gc,
+                goalDoor.getMinX() + goalDoor.getWidth() / 2.0 - cameraX,
+                goalDoor.getMinY() - 32);
+        }
 
         // 9. HUD：左上角血量條
         drawHUD(gc);
@@ -1305,29 +1316,8 @@ public class Level2Scene extends AnimationTimer {
         flowController.drawPauseOverlay(gc);
     }
 
-    /**
-     * 繪製半透明黑色遮罩 + 紅色大字「GAME OVER」+ R 鍵重啟提示。
-     *
-     * @param gc 畫布繪圖上下文
-     */
     private void drawGameOverOverlay(GraphicsContext gc) {
-        gc.save();
-        gc.setGlobalAlpha(0.65);
-        gc.setFill(Color.BLACK);
-        gc.fillRect(0, 0, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
-        gc.restore();
-
-        gc.setFill(Color.RED);
-        gc.setFont(Font.font(60));
-        gc.fillText("GAME OVER",
-                    Config.WINDOW_WIDTH / 2.0 - 173,
-                    Config.WINDOW_HEIGHT / 2.0 - 20);
-
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font(20));
-        gc.fillText("按 R 重新開始",
-                    Config.WINDOW_WIDTH / 2.0 - 65,
-                    Config.WINDOW_HEIGHT / 2.0 + 40);
+        HudRenderer.drawGameOverOverlay(gc, "GAME OVER", "按 R 重新開始本關", "（將重置至本關開始）");
     }
 
     /**
@@ -1434,6 +1424,8 @@ public class Level2Scene extends AnimationTimer {
         if (inventoryOpen) {
             HudRenderer.drawInventoryOverlay(gc, inventory, selectedInventorySlot);
         }
+        HudRenderer.drawControlsHint(gc);
+        HudRenderer.drawPickupNotice(gc, pickupNotice, pickupNoticeTimer);
     }
 
     private List<String> debugLines() {
@@ -1476,13 +1468,6 @@ public class Level2Scene extends AnimationTimer {
         return lines;
     }
 
-    private void drawGoalPrompt(GraphicsContext gc) {
-        if (!isNearGoalDoor()) return;
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font(14));
-        gc.fillText("Press Enter", goalDoor.getMinX() - 24, goalDoor.getMinY() - 12);
-    }
-
     private boolean isNearGoalDoor() {
         return Collision.checkAABB(player.getHitbox(), inflate(goalDoor, 12));
     }
@@ -1494,6 +1479,11 @@ public class Level2Scene extends AnimationTimer {
 
     private boolean isPortalEnterKey(KeyCode key) {
         return key == KeyCode.ENTER;
+    }
+
+    private void showPickupNotice(String text) {
+        pickupNotice = text;
+        pickupNoticeTimer = 1.4;
     }
 
     private String debugInventorySlots() {

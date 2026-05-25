@@ -220,6 +220,8 @@ public class BossScene extends AnimationTimer {
     private double bossPlatformDropTimer = 0;
     private Rectangle2D bossExitDoor = null;
     private double fps = 0;
+    private String pickupNotice = "";
+    private double pickupNoticeTimer = 0;
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -462,6 +464,7 @@ public class BossScene extends AnimationTimer {
         if (flashTimer    > 0) flashTimer    -= dt;
         if (phaseTextTimer > 0) phaseTextTimer -= dt;
         if (bossContactCooldown > 0) bossContactCooldown -= dt;
+        if (pickupNoticeTimer > 0) pickupNoticeTimer -= dt;
     }
 
     // ── 碰撞解析 ─────────────────────────────────────────────────────────────
@@ -962,6 +965,7 @@ public class BossScene extends AnimationTimer {
             if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
                 if (inventory.add(item.getType(), item.getQuantity())) {
                     item.markPickedUp();
+                    showPickupNotice("+" + item.getType().getHudLabel());
                 }
             }
         }
@@ -1065,6 +1069,7 @@ public class BossScene extends AnimationTimer {
             if (Collision.checkAABB(player.getHitbox(), gold.getHitbox())) {
                 Main.addGold(gold.getAmount());
                 gold.markPickedUp();
+                showPickupNotice("+" + gold.getAmount() + " Gold");
             }
         }
         goldPickups.removeIf(GoldPickup::isPickedUp);
@@ -1320,6 +1325,8 @@ public class BossScene extends AnimationTimer {
         if (inventoryOpen) {
             HudRenderer.drawInventoryOverlay(gc, inventory, selectedInventorySlot);
         }
+        HudRenderer.drawControlsHint(gc);
+        HudRenderer.drawPickupNotice(gc, pickupNotice, pickupNoticeTimer);
     }
 
     /**
@@ -1387,33 +1394,13 @@ public class BossScene extends AnimationTimer {
         gc.restore();
     }
 
-    /**
-     * 繪製玩家死亡後的 GAME OVER 畫面。
-     * 半透明黑色遮罩上顯示紅色大字，底部提示按 R 重試。
-     *
-     * @param gc 畫布繪圖上下文
-     */
     private void drawGameOverOverlay(GraphicsContext gc) {
-        // 半透明黑色遮罩
-        gc.save();
-        gc.setGlobalAlpha(0.65);
-        gc.setFill(Color.BLACK);
-        gc.fillRect(0, 0, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
-        gc.restore();
+        HudRenderer.drawGameOverOverlay(gc, "GAME OVER", "按 R 重新挑戰 Boss", "（血量與道具恢復至 Boss 戰開始）");
+    }
 
-        // 「GAME OVER」大字（紅色）
-        gc.setFill(Color.RED);
-        gc.setFont(Font.font(60));
-        gc.fillText("GAME OVER",
-                    Config.WINDOW_WIDTH / 2.0 - 173,
-                    Config.WINDOW_HEIGHT / 2.0 - 20);
-
-        // 重啟提示（白色小字）
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font(20));
-        gc.fillText("按 R 重新開始",
-                    Config.WINDOW_WIDTH / 2.0 - 65,
-                    Config.WINDOW_HEIGHT / 2.0 + 40);
+    private void showPickupNotice(String text) {
+        pickupNotice = text;
+        pickupNoticeTimer = 1.4;
     }
 
     private List<String> debugLines() {

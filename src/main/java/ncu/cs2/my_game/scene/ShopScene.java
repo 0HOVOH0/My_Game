@@ -313,6 +313,7 @@ public class ShopScene extends AnimationTimer {
         HudRenderer.drawPlayerStatus(gc, player, "SHOP");
         HudRenderer.drawGold(gc, Main.getGold());
         HudRenderer.drawInventorySlots(gc, inventory, selectedInventorySlot);
+        HudRenderer.drawControlsHint(gc);
         if (inventoryOpen) HudRenderer.drawInventoryOverlay(gc, inventory, selectedInventorySlot);
         if (isNearShop() && !shopOpen) drawOpenPrompt();
         if (isNearExitDoor()) drawExitPrompt();

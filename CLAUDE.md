@@ -67,3 +67,19 @@ src/
 - 保留所有原有註解，不要刪除 TODO
 - 新增功能前先確認 Config.java 有沒有對應常數
 - 場景切換記得停止前一個場景的 AnimationTimer
+
+## HudRenderer 共用方法（scene/HudRenderer.java）
+- `drawPlayerStatus(gc, player, title)` — 左上角 HP/Mana 條 + 火球圖示
+- `drawGold(gc, gold)` — 右上角金幣框
+- `drawInventorySlots(gc, inventory, selectedSlot)` — 右側三格背包 HUD
+- `drawInventoryOverlay(gc, inventory, selectedSlot)` — B 鍵背包 overlay
+- `drawBackpackFullPrompt(gc, inventory, groundItem)` — 滿背包替換提示
+- `drawPickupNotice(gc, text, timer)` — 金色拾取浮字（timer 初始 1.4s，使用 TextAlignment.CENTER）
+- `drawControlsHint(gc)` — 底部半透明操作提示欄（所有場景共用）
+- `drawGoalPrompt(gc, screenCx, screenY)` — 終點門 [Enter] 提示框，帶 X 軸邊界夾緊，需傳入螢幕座標（worldX - cameraX）
+- `drawGameOverOverlay(gc, title, message, hint)` — GAME OVER 遮罩，使用 TextAlignment.CENTER
+
+## 場景背景色
+- DungeonMapRenderer（Level 1 / 2）：`#121219`
+- BossScene：`#1a0025`
+- StartScene（FXML）：`#06080f`

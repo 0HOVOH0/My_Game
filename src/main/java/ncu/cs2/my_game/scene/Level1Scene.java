@@ -7,7 +7,6 @@ import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.input.KeyCode;
 import javafx.scene.paint.Color;
-import javafx.scene.text.Font;
 import javafx.stage.Stage;
 import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.Main;
@@ -237,11 +236,17 @@ public class Level1Scene extends AnimationTimer {
         gc.translate(-cameraX, 0);
         player.draw(gc);
         effectManager.draw(gc);
-        drawGoalPrompt(gc);
         gc.restore();
+
+        if (isNearGoalDoor()) {
+            HudRenderer.drawGoalPrompt(gc,
+                goalDoor.getMinX() + goalDoor.getWidth() / 2.0 - cameraX,
+                goalDoor.getMinY() - 32);
+        }
 
         HudRenderer.drawPlayerStatus(gc, player, "LEVEL 1");
         drawProgress(gc);
+        HudRenderer.drawControlsHint(gc);
         flowController.drawDebugOverlay(gc, debugLines());
 
         if (!player.isAlive()) {
@@ -259,18 +264,7 @@ public class Level1Scene extends AnimationTimer {
     }
 
     private void drawGameOverOverlay(GraphicsContext gc) {
-        gc.save();
-        gc.setGlobalAlpha(0.65);
-        gc.setFill(Color.BLACK);
-        gc.fillRect(0, 0, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
-        gc.restore();
-
-        gc.setFill(Color.RED);
-        gc.setFont(Font.font(60));
-        gc.fillText("GAME OVER", Config.WINDOW_WIDTH / 2.0 - 173, Config.WINDOW_HEIGHT / 2.0 - 20);
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font(20));
-        gc.fillText("按 R 重新開始", Config.WINDOW_WIDTH / 2.0 - 65, Config.WINDOW_HEIGHT / 2.0 + 40);
+        HudRenderer.drawGameOverOverlay(gc, "GAME OVER", "按 R 重新開始本關", "（將重置至關卡開始）");
     }
 
     private Rectangle2D inflate(Rectangle2D rect, double amount) {
@@ -309,13 +303,6 @@ public class Level1Scene extends AnimationTimer {
             lines.add("Validation: " + mapResult.reason());
         }
         return lines;
-    }
-
-    private void drawGoalPrompt(GraphicsContext gc) {
-        if (!isNearGoalDoor()) return;
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font(14));
-        gc.fillText("Press Enter", goalDoor.getMinX() - 24, goalDoor.getMinY() - 12);
     }
 
     private boolean isNearGoalDoor() {

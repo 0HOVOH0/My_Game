@@ -4,6 +4,7 @@ import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.image.Image;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
+import javafx.scene.text.TextAlignment;
 import ncu.cs2.my_game.Config;
 import ncu.cs2.my_game.entity.Player;
 import ncu.cs2.my_game.item.Inventory;
@@ -243,6 +244,76 @@ public final class HudRenderer {
         gc.setFill(Color.WHITE);
         gc.setFont(Font.font(10));
         gc.fillText("K", x + size - 9, y + 10);
+        gc.restore();
+    }
+
+    public static void drawPickupNotice(GraphicsContext gc, String text, double timer) {
+        if (timer <= 0 || text.isEmpty()) return;
+        double alpha = Math.min(1.0, timer / 0.4);
+        double floatY = Config.WINDOW_HEIGHT / 2.0 - 60 - (1.4 - timer) * 22;
+        gc.save();
+        gc.setGlobalAlpha(alpha);
+        gc.setFont(Font.font("monospace", 18));
+        gc.setFill(Color.web("#ffd700"));
+        gc.setTextAlign(TextAlignment.CENTER);
+        gc.fillText(text, Config.WINDOW_WIDTH / 2.0, floatY);
+        gc.restore();
+    }
+
+    public static void drawControlsHint(GraphicsContext gc) {
+        final String hint = "[A/D] 移動  [W] 跳躍  [S] 穿台/蹲  [J] 攻擊  [K] 火球  [U/I/O] 道具  [B] 背包  [P] 暫停";
+        final double barH = 18;
+        final double y = Config.WINDOW_HEIGHT - barH;
+        gc.save();
+        gc.setGlobalAlpha(0.75);
+        gc.setFill(Color.web("#0d1520"));
+        gc.fillRect(0, y, Config.WINDOW_WIDTH, barH);
+        gc.setGlobalAlpha(1.0);
+        gc.setFill(Color.web("#5a8aaa"));
+        gc.setFont(Font.font("monospace", 10));
+        gc.fillText(hint, 8, y + 13);
+        gc.restore();
+    }
+
+    public static void drawGoalPrompt(GraphicsContext gc, double screenCx, double screenY) {
+        final String label = "[Enter] 進入下一關";
+        final double boxW = 128;
+        double boxX = Math.max(4, Math.min(Config.WINDOW_WIDTH - boxW - 4, screenCx - boxW / 2.0));
+        gc.save();
+        gc.setGlobalAlpha(0.82);
+        gc.setFill(Color.web("#06080f"));
+        gc.fillRoundRect(boxX, screenY - 14, boxW, 22, 5, 5);
+        gc.setGlobalAlpha(1.0);
+        gc.setFill(Color.GOLD);
+        gc.setFont(Font.font("monospace", 13));
+        gc.setTextAlign(TextAlignment.CENTER);
+        gc.fillText(label, boxX + boxW / 2.0, screenY);
+        gc.restore();
+    }
+
+    public static void drawGameOverOverlay(GraphicsContext gc, String title, String message, String hint) {
+        gc.save();
+        gc.setGlobalAlpha(0.65);
+        gc.setFill(Color.BLACK);
+        gc.fillRect(0, 0, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
+        gc.setGlobalAlpha(1.0);
+
+        double cx = Config.WINDOW_WIDTH / 2.0;
+        double cy = Config.WINDOW_HEIGHT / 2.0;
+        gc.setTextAlign(TextAlignment.CENTER);
+
+        gc.setFill(Color.RED);
+        gc.setFont(Font.font(60));
+        gc.fillText(title, cx, cy - 20);
+
+        gc.setFill(Color.WHITE);
+        gc.setFont(Font.font(20));
+        gc.fillText(message, cx, cy + 40);
+
+        gc.setFill(Color.web("#aaaaaa"));
+        gc.setFont(Font.font(14));
+        gc.fillText(hint, cx, cy + 66);
+
         gc.restore();
     }
 
