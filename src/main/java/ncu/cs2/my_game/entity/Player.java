@@ -22,7 +22,7 @@ public class Player extends Entity {
     // ── 攻擊常數 ─────────────────────────────────────────────────────────────
 
     /** 每次攻擊造成的傷害值 */
-    public static final int    ATTACK_DAMAGE   = 20;
+    public static final int    ATTACK_DAMAGE   = 2000; // TEST: one-shot for testing
 
     /** 攻擊判定框持續時間（秒） */
     public static final double ATTACK_DURATION = 0.28;
