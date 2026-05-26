@@ -239,6 +239,19 @@ Bomb 使用後會在玩家位置生成 `BombEntity`，2 秒後爆炸，半徑 15
 
 ## Changelog
 
+### v3.0 — Version C 地牢架構：迷宮磚塊 + 走廊設計（2026-05-26）
+- **全新 `PlatformDungeonGenerator` 架構**：從浮島式平台改為「大型實心 WALL 磚塊 + 走廊」設計，地圖更有地牢層次感
+- **`generateDungeonBlocks()`**：生成 5–7 個寬 8–11 磚的大型 WALL 矩形（高度從頂部延伸至 y=17）。高度從左到右整體上升（大方向），但有 25% 機率往下走一塊，形成迷宮感
+- **`addCorridorClimbers()`**：每段走廊（寬 5–8 磚）在中央放置 ONE_WAY_PLATFORM 踏腳石，每 3 磚高度差一層（96px ≈ 跳躍上限的 75%），連接地板（y=15）到各磚塊頂面
+- **`clearBlockAirspace()`**：取代舊版 `clearMainRouteAirspace`，保護磚塊內部不被頭部淨空程序挖穿；僅清除非磚塊 WALL 與 DECORATION 裝飾磚
+- **出生點改至地板左側**：玩家從地圖左下角出發（樓層地面），需利用走廊梯台爬升至各磚塊頂面，再跳躍到達出口
+- **`isInsideDungeonBlock()` 防護**：地板逃生平台、走廊清空、BFS 跳躍驗證均跳過磚塊內部實心位置
+- **`clearSpawnSafeZone` 修正**：不再清除 WALL 磚（防止把磚塊結構挖空），只清除 SPIKE 與 DECORATION
+- **出口位於最後一個磚塊頂面右側**：距離出生點遠端，高度近地圖頂部（topY = 2–6）
+- **`validateGeneratedMap` 適配**：地板逃生驗證跳過「tile y=15 是 WALL（玩家走廊側向逃脫）」位置，避免磚塊內部虛報失敗
+
+### v2.5 — 卡死根治（移除垂直支撐柱 + 走廊保障）
+
 ### v2.4 — 卡死根治：移除陷阱牆、地板走廊保障
 - **移除 `maybeAddVerticalSupport`**：平台下方隨機垂直牆柱讓玩家從平台邊緣落下後受困於側牆夾縫，無法繼續移動，完全移除
 - **移除 `addPlatformLedge`**：平台正下方兩格 WALL 同樣製造低天花板陷阱（PLAYER_HEIGHT=42px，tile y=16 像素 512–543 與玩家頭部像素 ≈534 重疊），完全移除
