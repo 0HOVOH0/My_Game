@@ -55,12 +55,12 @@ public class BombEntity {
         if (tryLandOn(ground)) return;
         if (platforms != null) {
             for (Rectangle2D platform : platforms) {
-                if (tryLandOn(platform)) return;
+                if (platform != null && tryLandOn(platform)) return;
             }
         }
         if (covers != null) {
             for (Rectangle2D cover : covers) {
-                if (tryLandOn(cover)) return;
+                if (cover != null && tryLandOn(cover)) return;
             }
         }
     }

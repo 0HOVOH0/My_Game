@@ -239,6 +239,12 @@ Bomb 使用後會在玩家位置生成 `BombEntity`，2 秒後爆炸，半徑 15
 
 ## Changelog
 
+### v1.7.1 — Bug 修復
+- 修復玩家死亡後仍能進入下一關的問題（`Level1Scene`：`damagePlayerOnTraps()` 後加死亡提前返回）
+- 修復敵人巡邏超出邊界後只改方向、未修正位置的問題（`Enemy`：轉向時同步將 `x` 貼回邊界）
+- 修復 `checkEnemyDrops` 迴圈缺少 null 檢查，理論上可能造成 NPE（`Level2Scene`）
+- 修復炸彈落地判定迭代 platforms / covers 陣列缺少 null 元素防護（`BombEntity`）
+
 ### v1.7 — UI 介面改善合併
 - 統一所有場景使用 `HudRenderer.drawGameOverOverlay()`，以 `TextAlignment.CENTER` 取代硬編碼像素偏移，文字置中精確
 - GAME OVER 畫面新增副標題提示（Level 1/2 說明重啟範圍，Boss 關說明狀態恢復）

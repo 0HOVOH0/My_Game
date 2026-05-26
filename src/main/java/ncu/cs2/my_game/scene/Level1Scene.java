@@ -123,6 +123,7 @@ public class Level1Scene extends AnimationTimer {
         tryResolvePlayerStandUp();
         clampPlayerToWorld();
         damagePlayerOnTraps();
+        if (!player.isAlive()) return;
         checkPlayerFireballsVsTerrain();
         checkGoalDoor();
         updateCamera();

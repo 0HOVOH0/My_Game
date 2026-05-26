@@ -189,8 +189,10 @@ public class Enemy extends Entity {
 
         // 3. 到達巡邏邊界時原地修正並反向
         if (!chasing && x <= patrolLeft) {
+            x = patrolLeft;
             moveDir = 1.0;   // 轉向右
         } else if (!chasing && x + width >= patrolRight) {
+            x = patrolRight - width;
             moveDir = -1.0;  // 轉向左
         }
 

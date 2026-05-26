@@ -987,7 +987,7 @@ public class Level2Scene extends AnimationTimer {
     private void checkEnemyDrops() {
         for (int i = 0; i < enemies.length; i++) {
             Enemy enemy = enemies[i];
-            if (enemyDropsHandled[i] || enemy.isAlive()) continue;
+            if (enemy == null || enemyDropsHandled[i] || enemy.isAlive()) continue;
 
             enemyDropsHandled[i] = true;
             addGold(random.nextInt(10) + 1,
