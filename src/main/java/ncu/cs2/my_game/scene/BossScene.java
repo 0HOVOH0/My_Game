@@ -32,6 +32,7 @@ import ncu.cs2.my_game.item.InventorySlot;
 import ncu.cs2.my_game.item.ItemSpawnManager;
 import ncu.cs2.my_game.item.PickupItem;
 import ncu.cs2.my_game.item.PickupType;
+import ncu.cs2.my_game.item.PotionInventory;
 import ncu.cs2.my_game.item.UseContext;
 import ncu.cs2.my_game.physics.Collision;
 import ncu.cs2.my_game.state.BossFightSnapshot;
@@ -118,6 +119,8 @@ public class BossScene extends AnimationTimer {
 
     /** 跨關卡背包 */
     private final Inventory inventory;
+
+    private final PotionInventory potionInventory;
 
     /** Boss 關可撿取道具 */
     private final List<PickupItem> pickupItems;
@@ -251,6 +254,7 @@ public class BossScene extends AnimationTimer {
         player.startInvincibility(Config.PLAYER_SPAWN_PROTECTION_SECONDS);
 
         inventory = Main.getInventory();
+        potionInventory = Main.getPotionInventory();
         pickupItems = new ArrayList<>();
         goldPickups = new ArrayList<>();
         bombs = new ArrayList<>();
@@ -309,6 +313,7 @@ public class BossScene extends AnimationTimer {
                 effectManager.playSlash(player);
             }
             handleInventoryKey(e.getCode());
+            handlePotionKey(e.getCode());
             if (e.getCode() == KeyCode.B) {
                 inventoryOpen = !inventoryOpen;
             }
@@ -392,6 +397,13 @@ public class BossScene extends AnimationTimer {
             // 仍更新視覺計時器，讓閃光與文字正常淡出
             if (flashTimer    > 0) flashTimer    -= dt;
             if (phaseTextTimer > 0) phaseTextTimer -= dt;
+            if (pickupNoticeTimer > 0) {
+                pickupNoticeTimer -= dt;
+                if (pickupNoticeTimer <= 0) {
+                    pickupNoticeTimer = 0;
+                    pickupNotice = "";
+                }
+            }
             return;
         }
 
@@ -464,7 +476,13 @@ public class BossScene extends AnimationTimer {
         if (flashTimer    > 0) flashTimer    -= dt;
         if (phaseTextTimer > 0) phaseTextTimer -= dt;
         if (bossContactCooldown > 0) bossContactCooldown -= dt;
-        if (pickupNoticeTimer > 0) pickupNoticeTimer -= dt;
+        if (pickupNoticeTimer > 0) {
+            pickupNoticeTimer -= dt;
+            if (pickupNoticeTimer <= 0) {
+                pickupNoticeTimer = 0;
+                pickupNotice = "";
+            }
+        }
     }
 
     // ── 碰撞解析 ─────────────────────────────────────────────────────────────
@@ -721,6 +739,17 @@ public class BossScene extends AnimationTimer {
         inventory.useSlot(slotIndex, new UseContext(player, null, boss, bombs));
     }
 
+    private void handlePotionKey(KeyCode key) {
+        int slotIndex = keyToPotionSlotIndex(key);
+        if (slotIndex < 0) return;
+        if (trySwapGroundPotion(slotIndex)) return;
+        InventorySlot slot = potionInventory.getSlot(slotIndex);
+        boolean used = potionInventory.useSlot(slotIndex, new UseContext(player, null, boss, bombs));
+        if (!used && slot != null && !slot.isEmpty() && player.getHp() >= player.getMaxHp()) {
+            showPickupNotice("HP Full");
+        }
+    }
+
     private void tryResolvePlayerStandUp() {
         if (!player.wantsToStandUp()) return;
 
@@ -963,7 +992,10 @@ public class BossScene extends AnimationTimer {
         for (PickupItem item : pickupItems) {
             if (item.isPickedUp()) continue;
             if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
-                if (inventory.add(item.getType(), item.getQuantity())) {
+                boolean accepted = item.getType().isPotion()
+                    ? potionInventory.add(item.getType(), item.getQuantity())
+                    : inventory.add(item.getType(), item.getQuantity());
+                if (accepted) {
                     item.markPickedUp();
                     showPickupNotice("+" + item.getType().getHudLabel());
                 }
@@ -1125,14 +1157,41 @@ public class BossScene extends AnimationTimer {
         return true;
     }
 
+    private boolean trySwapGroundPotion(int slotIndex) {
+        PickupItem groundItem = findBlockedPotionUnderPlayer();
+        if (groundItem == null) return false;
+
+        InventorySlot dropped = potionInventory.replaceSlot(slotIndex,
+            groundItem.getType(), groundItem.getQuantity());
+        if (dropped == null) return false;
+
+        groundItem.markPickedUp();
+        addPickup(dropped.getType(), player.getX(),
+            player.getY() + player.getHeight() - PickupItem.SIZE, dropped.getCount());
+        pickupItems.removeIf(PickupItem::isPickedUp);
+        showPickupNotice("Potion swapped");
+        return true;
+    }
+
     private PickupItem findBlockedPickupUnderPlayer() {
         if (!inventory.isFull()) return null;
         for (PickupItem item : pickupItems) {
             if (item.isPickedUp()) continue;
+            if (item.getType().isPotion()) continue;
             if (inventory.contains(item.getType())) continue;
             if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
                 return item;
             }
+        }
+        return null;
+    }
+
+    private PickupItem findBlockedPotionUnderPlayer() {
+        if (!potionInventory.isFull()) return null;
+        for (PickupItem item : pickupItems) {
+            if (item.isPickedUp() || !item.getType().isPotion()) continue;
+            if (potionInventory.contains(item.getType())) continue;
+            if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) return item;
         }
         return null;
     }
@@ -1142,6 +1201,14 @@ public class BossScene extends AnimationTimer {
             case U -> 0;
             case I -> 1;
             case O -> 2;
+            default -> -1;
+        };
+    }
+
+    private int keyToPotionSlotIndex(KeyCode key) {
+        return switch (key) {
+            case N -> 0;
+            case M -> 1;
             default -> -1;
         };
     }
@@ -1318,9 +1385,14 @@ public class BossScene extends AnimationTimer {
         HudRenderer.drawGold(gc, Main.getGold());
         drawBossHpBar(gc);
         HudRenderer.drawInventorySlots(gc, inventory, selectedInventorySlot);
+        HudRenderer.drawPotionSlots(gc, potionInventory);
         PickupItem blockedItem = findBlockedPickupUnderPlayer();
         if (blockedItem != null) {
             HudRenderer.drawBackpackFullPrompt(gc, inventory, blockedItem);
+        }
+        PickupItem blockedPotion = findBlockedPotionUnderPlayer();
+        if (blockedPotion != null) {
+            HudRenderer.drawPotionFullPrompt(gc, potionInventory, blockedPotion);
         }
         if (inventoryOpen) {
             HudRenderer.drawInventoryOverlay(gc, inventory, selectedInventorySlot);

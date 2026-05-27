@@ -17,6 +17,7 @@ import ncu.cs2.my_game.item.Inventory;
 import ncu.cs2.my_game.item.InventorySlot;
 import ncu.cs2.my_game.item.ItemSpawnManager;
 import ncu.cs2.my_game.item.PickupItem;
+import ncu.cs2.my_game.item.PotionInventory;
 import ncu.cs2.my_game.item.UseContext;
 import ncu.cs2.my_game.physics.Collision;
 import ncu.cs2.my_game.shop.ShopItem;
@@ -40,6 +41,7 @@ public class ShopScene extends AnimationTimer {
     private final Rectangle2D shopCounter;
     private final Rectangle2D exitDoor;
     private final Inventory inventory;
+    private final PotionInventory potionInventory;
     private final List<PickupItem> pickupItems;
     private final ItemSpawnManager itemSpawnManager;
     private final ShopManager shopManager;
@@ -76,6 +78,7 @@ public class ShopScene extends AnimationTimer {
         exitDoor = new Rectangle2D(Config.WINDOW_WIDTH - 72, GROUND_Y - 120, 46, 120);
 
         inventory = Main.getInventory();
+        potionInventory = Main.getPotionInventory();
         pickupItems = new ArrayList<>();
         itemSpawnManager = new ItemSpawnManager(ground, platforms);
         shopManager = new ShopManager(Main.getStageNumber());
@@ -118,6 +121,7 @@ public class ShopScene extends AnimationTimer {
         if (key == KeyCode.B) inventoryOpen = !inventoryOpen;
         if (key == KeyCode.E && isNearShop()) shopOpen = true;
         handleInventoryKey(key);
+        handlePotionKey(key);
     }
 
     private void handleShopKey(KeyCode key) {
@@ -213,9 +217,18 @@ public class ShopScene extends AnimationTimer {
             return;
         }
 
-        if (inventory.add(item.getType())) {
+        boolean accepted = item.getType().isPotion()
+            ? potionInventory.add(item.getType(), 1)
+            : inventory.add(item.getType());
+        if (accepted) {
             item.consumeOne();
             showMessage("Bought " + item.getType().getHudLabel());
+            return;
+        }
+
+        if (item.getType().isPotion()) {
+            Main.addGold(item.getPrice());
+            showMessage("Potion slots full");
             return;
         }
 
@@ -247,7 +260,10 @@ public class ShopScene extends AnimationTimer {
         for (PickupItem item : pickupItems) {
             if (item.isPickedUp()) continue;
             if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
-                if (inventory.add(item.getType(), item.getQuantity())) {
+                boolean accepted = item.getType().isPotion()
+                    ? potionInventory.add(item.getType(), item.getQuantity())
+                    : inventory.add(item.getType(), item.getQuantity());
+                if (accepted) {
                     item.markPickedUp();
                 }
             }
@@ -260,6 +276,17 @@ public class ShopScene extends AnimationTimer {
         if (slotIndex < 0) return;
         selectedInventorySlot = slotIndex;
         inventory.useSlot(slotIndex, new UseContext(player, null, null));
+    }
+
+    private void handlePotionKey(KeyCode key) {
+        int slotIndex = switch (key) {
+            case N -> 0;
+            case M -> 1;
+            default -> -1;
+        };
+        if (slotIndex >= 0) {
+            potionInventory.useSlot(slotIndex, new UseContext(player, null, null));
+        }
     }
 
     private int keyToSlotIndex(KeyCode key) {
@@ -313,6 +340,7 @@ public class ShopScene extends AnimationTimer {
         HudRenderer.drawPlayerStatus(gc, player, "SHOP");
         HudRenderer.drawGold(gc, Main.getGold());
         HudRenderer.drawInventorySlots(gc, inventory, selectedInventorySlot);
+        HudRenderer.drawPotionSlots(gc, potionInventory);
         HudRenderer.drawControlsHint(gc);
         if (inventoryOpen) HudRenderer.drawInventoryOverlay(gc, inventory, selectedInventorySlot);
         if (isNearShop() && !shopOpen) drawOpenPrompt();

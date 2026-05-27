@@ -54,6 +54,10 @@ public enum PickupType {
 
     public String getHudLabel() { return hudLabel; }
 
+    public boolean isPotion() {
+        return this == SMALL_POTION || this == LARGE_POTION;
+    }
+
     public PickupItem create(double x, double y) {
         return create(x, y, 1);
     }

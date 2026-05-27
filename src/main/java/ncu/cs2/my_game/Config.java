@@ -12,7 +12,7 @@ public final class Config {
     public static final int BASE_WIDTH  = 800;
 
     /** 遊戲邏輯與 Canvas 渲染的基準高度（像素）。 */
-    public static final int BASE_HEIGHT = 600;
+    public static final int BASE_HEIGHT = 632;
 
     /** 視窗最小寬度（像素）。 */
     public static final int MIN_WIDTH = 640;

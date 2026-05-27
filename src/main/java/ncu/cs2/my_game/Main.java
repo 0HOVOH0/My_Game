@@ -18,6 +18,7 @@ import ncu.cs2.my_game.map.TileMap;
 import ncu.cs2.my_game.stage.StageDefinition;
 import ncu.cs2.my_game.stage.StageGenerator;
 import ncu.cs2.my_game.item.Inventory;
+import ncu.cs2.my_game.item.PotionInventory;
 import ncu.cs2.my_game.economy.CurrencyManager;
 import ncu.cs2.my_game.entity.BossType;
 
@@ -51,6 +52,9 @@ public class Main extends Application {
 
     /** 跨 Level2 與 Boss 關保留的簡易背包 */
     private static Inventory inventory = new Inventory();
+
+    /** Dedicated potion slots, separate from the three combat-item slots. */
+    private static PotionInventory potionInventory = new PotionInventory();
 
     /** 跨關卡保留的金幣。 */
     private static CurrencyManager currencyManager = new CurrencyManager();
@@ -136,6 +140,7 @@ public class Main extends Application {
         persistedHp     = Config.PLAYER_MAX_HP;
         persistedMana   = Config.PLAYER_MAX_MANA;
         inventory       = new Inventory();
+        potionInventory = new PotionInventory();
         currencyManager = new CurrencyManager();
         stageGenerator  = new StageGenerator();
         mapPoolManager  = new MapPoolManager();
@@ -241,6 +246,11 @@ public class Main extends Application {
     /** 回傳跨關卡背包 */
     public static Inventory getInventory() {
         return inventory;
+    }
+
+    /** Return the two slots reserved for healing and future potion types. */
+    public static PotionInventory getPotionInventory() {
+        return potionInventory;
     }
 
     public static int getGold() {

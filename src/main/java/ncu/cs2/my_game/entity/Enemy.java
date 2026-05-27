@@ -145,6 +145,7 @@ public class Enemy extends Entity {
      */
     @Override
     public void update(double deltaTime) {
+        capturePreviousPosition();
         // 死亡後停止所有更新
         if (!isAlive()) return;
 
@@ -172,10 +173,13 @@ public class Enemy extends Entity {
         if (chasing) {
             double playerCenter = targetPlayer.getX() + targetPlayer.getWidth() / 2.0;
             double enemyCenter = x + width / 2.0;
-            if (Math.abs(playerCenter - enemyCenter) > 8.0) {
+            if (steersTowardPlayerWhileChasing()
+                    && Math.abs(playerCenter - enemyCenter) > 8.0) {
                 moveDir = playerCenter > enemyCenter ? 1.0 : -1.0;
             }
-            tryJumpChase(playerCenter, enemyCenter);
+            if (canLeavePatrolPlatformWhileChasing()) {
+                tryJumpChase(playerCenter, enemyCenter);
+            }
         }
         if (chaseJumpCooldown > 0) {
             chaseJumpCooldown -= deltaTime;
@@ -188,11 +192,15 @@ public class Enemy extends Entity {
         y += velocityY * deltaTime;
 
         // 3. 到達巡邏邊界時原地修正並反向
-        if (!chasing && x <= patrolLeft) {
-            x = patrolLeft;
+        if ((!chasing || !canLeavePatrolPlatformWhileChasing()) && x <= patrolLeft) {
+            if (patrolLeft - x <= PATROL_SPEED * speedMultiplier * deltaTime + 2.0) {
+                x = patrolLeft;
+            }
             moveDir = 1.0;   // 轉向右
-        } else if (!chasing && x + width >= patrolRight) {
-            x = patrolRight - width;
+        } else if ((!chasing || !canLeavePatrolPlatformWhileChasing()) && x + width >= patrolRight) {
+            if (x + width - patrolRight <= PATROL_SPEED * speedMultiplier * deltaTime + 2.0) {
+                x = patrolRight - width;
+            }
             moveDir = -1.0;  // 轉向左
         }
 
@@ -252,10 +260,14 @@ public class Enemy extends Entity {
         double dx = (player.getX() + player.getWidth() / 2.0) - (x + width / 2.0);
         double dy = (player.getY() + player.getHeight() / 2.0) - (y + height / 2.0);
         double distance = Math.sqrt(dx * dx + dy * dy);
-        boolean inDetectionRadius = distance <= getDetectRange();
+        boolean insidePatrolDetection = !usesPatrolZoneDetection()
+            || isInsidePatrolDetectionZone(player);
+        boolean inDetectionRadius = distance <= getDetectRange() && insidePatrolDetection;
         hasLineOfSight = inDetectionRadius && !isLineBlocked(player, blockers);
         if (hasLineOfSight) {
             memoryTimer = MEMORY_DURATION;
+        } else if (usesPatrolZoneDetection() && !insidePatrolDetection) {
+            memoryTimer = 0;
         } else if (inDetectionRadius) {
             memoryTimer = Math.min(memoryTimer, 0.2);
         } else if (distance > getChaseRange()) {
@@ -275,6 +287,19 @@ public class Enemy extends Entity {
 
     protected double getChaseRange() { return CHASE_RANGE; }
 
+    protected boolean usesPatrolZoneDetection() { return true; }
+
+    protected boolean canLeavePatrolPlatformWhileChasing() { return true; }
+
+    protected boolean steersTowardPlayerWhileChasing() { return true; }
+
+    private boolean isInsidePatrolDetectionZone(Player player) {
+        double playerCenter = player.getX() + player.getWidth() / 2.0;
+        double padding = 34.0;
+        return playerCenter >= patrolLeft - padding
+            && playerCenter <= patrolRight + padding;
+    }
+
     public void setNavigationSurfaces(Rectangle2D[] surfaces) {
         navigationSurfaces = surfaces == null ? new Rectangle2D[0] : surfaces;
     }
@@ -284,7 +309,8 @@ public class Enemy extends Entity {
     }
 
     public boolean shouldDropFromPlatform() {
-        if (!onGround || recoveryTimer > 0 || !isChasingPlayer() || targetPlayer == null) return false;
+        if (!canLeavePatrolPlatformWhileChasing() || !onGround || recoveryTimer > 0
+                || !isChasingPlayer() || targetPlayer == null) return false;
         boolean playerBelow = targetPlayer.getY() > y + height + 28.0;
         if (!playerBelow) return false;
 
@@ -337,7 +363,8 @@ public class Enemy extends Entity {
             memoryTimer = 0;
         }
         recoveryTimer = activelyChasing ? 0.12 : 0.45;
-        if (activelyChasing && onGround && chaseJumpCooldown <= 0
+        if (activelyChasing && canLeavePatrolPlatformWhileChasing()
+            && onGround && chaseJumpCooldown <= 0
             && targetPlayer != null) {
             velocityY = Config.JUMP_FORCE * 0.74;
             onGround = false;

@@ -24,8 +24,8 @@ public record PlatformGenerationConfig(
         return new PlatformGenerationConfig(
             3,
             Math.min(8, 6 + difficulty),
-            3 + difficulty / 3,
-            Math.min(7, 5 + difficulty / 3),
+            2,
+            2,
             -3,
             Math.min(4, 3 + difficulty / 3),
             stats.maxHorizontalJumpDistance(),

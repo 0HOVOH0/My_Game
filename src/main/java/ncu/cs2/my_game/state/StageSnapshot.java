@@ -20,6 +20,7 @@ public class StageSnapshot {
     private final double playerMana;
     private final int gold;
     private final InventorySnapshot inventorySnapshot;
+    private final PotionInventorySnapshot potionInventorySnapshot;
     private final List<PickupSnapshot> pickupSnapshots;
     private final List<GoldSnapshot> goldSnapshots;
     private final List<EnemySnapshot> enemySnapshots;
@@ -55,6 +56,7 @@ public class StageSnapshot {
         this.playerMana = playerMana;
         this.gold = Main.getGold();
         this.inventorySnapshot = new InventorySnapshot(inventory);
+        this.potionInventorySnapshot = new PotionInventorySnapshot(Main.getPotionInventory());
         this.pickupSnapshots = snapshotPickups(pickupItems);
         this.goldSnapshots = snapshotGold(goldPickups);
         this.enemySnapshots = new ArrayList<>(enemySnapshots);
@@ -67,6 +69,7 @@ public class StageSnapshot {
 
     public void restoreInventory(Inventory inventory) {
         inventorySnapshot.restore(inventory);
+        potionInventorySnapshot.restore(Main.getPotionInventory());
         Main.setGold(gold);
     }
 

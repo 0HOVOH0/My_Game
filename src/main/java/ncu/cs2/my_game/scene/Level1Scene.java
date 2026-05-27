@@ -144,11 +144,26 @@ public class Level1Scene extends AnimationTimer {
         if (!landed) player.setOnGround(false);
 
         for (Rectangle2D solid : tileMap.getSolidTilesNear(inflate(player.getHitbox(), 2))) {
-            int result = Collision.resolveSolid(player, solid);
-            if (result == -1) {
-                player.setOnGround(true);
+            Collision.resolveSolid(player, solid);
+        }
+        if (hasSolidSupportUnderPlayer()) {
+            player.setOnGround(true);
+        } else if (!landed) {
+            player.setOnGround(false);
+        }
+    }
+
+    private boolean hasSolidSupportUnderPlayer() {
+        Rectangle2D hitbox = player.getHitbox();
+        double feetY = hitbox.getMaxY();
+        for (Rectangle2D solid : tileMap.getSolidTilesNear(inflate(hitbox, 3))) {
+            boolean horizontallyAbove = hitbox.getMaxX() > solid.getMinX() + 1
+                && hitbox.getMinX() < solid.getMaxX() - 1;
+            if (horizontallyAbove && Math.abs(feetY - solid.getMinY()) <= 1.5) {
+                return true;
             }
         }
+        return false;
     }
 
     private void updatePlayerPlatformDrop(double dt) {
@@ -246,7 +261,8 @@ public class Level1Scene extends AnimationTimer {
         }
 
         HudRenderer.drawPlayerStatus(gc, player, "LEVEL 1");
-        drawProgress(gc);
+        HudRenderer.drawStageProgress(gc, player.getX(), tileMap.getSpawnX(),
+            goalDoor.getMinX() + goalDoor.getWidth() / 2.0);
         HudRenderer.drawControlsHint(gc);
         flowController.drawDebugOverlay(gc, debugLines());
 
@@ -254,14 +270,6 @@ public class Level1Scene extends AnimationTimer {
             drawGameOverOverlay(gc);
         }
         flowController.drawPauseOverlay(gc);
-    }
-
-    private void drawProgress(GraphicsContext gc) {
-        double ratio = player.getX() / Math.max(1.0, tileMap.getWorldWidth() - Config.WINDOW_WIDTH);
-        gc.setFill(Color.web("#232733"));
-        gc.fillRect(12, 84, 150, 5);
-        gc.setFill(Color.web("#8af0ff"));
-        gc.fillRect(12, 84, 150 * Math.max(0, Math.min(1, ratio)), 5);
     }
 
     private void drawGameOverOverlay(GraphicsContext gc) {

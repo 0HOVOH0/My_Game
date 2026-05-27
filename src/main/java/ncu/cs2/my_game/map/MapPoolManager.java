@@ -23,6 +23,7 @@ public class MapPoolManager {
     private static final int MAX_POOL_ATTEMPTS = 120;
     private static final int RECENT_HISTORY_SIZE = 3;
     private static final int PREVIEW_SCALE = 8;
+    private static final int MIN_INTERIOR_WALL_TILES = 18;
     private static final Path PREVIEW_DIR = Path.of("generated-map-pool");
 
     private final Random random = new Random();
@@ -49,10 +50,14 @@ public class MapPoolManager {
             }
         }
 
-        while (normalMaps.size() < Math.min(3, targetSize)) {
+        int fallbackAttempts = 0;
+        while (normalMaps.size() < Math.min(3, targetSize) && fallbackAttempts < 60) {
+            fallbackAttempts++;
             TileMap fallback = new PlatformDungeonGenerator(System.nanoTime()).generateLevel(2);
-            normalMaps.add(fallback.copy());
-            writePreview(fallback, normalMaps.size(), System.nanoTime());
+            if (isLegalPoolMap(fallback)) {
+                normalMaps.add(fallback.copy());
+                writePreview(fallback, normalMaps.size(), System.nanoTime());
+            }
         }
 
         System.out.println("[MapPool] generated normal maps=" + normalMaps.size()
@@ -84,7 +89,18 @@ public class MapPoolManager {
         MapValidationResult mapResult = map.getMapValidationResult();
         PlatformValidationResult platformResult = map.getValidationResult();
         return mapResult != null && mapResult.isValid()
-            && platformResult != null && platformResult.spawnToExitReachable();
+            && platformResult != null && platformResult.spawnToExitReachable()
+            && countInteriorWallTiles(map) >= MIN_INTERIOR_WALL_TILES;
+    }
+
+    private int countInteriorWallTiles(TileMap map) {
+        int count = 0;
+        for (int y = 1; y < map.getHeightTiles() - 1; y++) {
+            for (int x = 1; x < map.getWidthTiles() - 1; x++) {
+                if (map.getTile(x, y) == TileType.WALL) count++;
+            }
+        }
+        return count;
     }
 
     private int pickIndexAvoidingRecent(long requestSeed) {

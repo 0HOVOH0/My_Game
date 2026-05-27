@@ -103,6 +103,7 @@ public class Boss extends Entity {
      */
     @Override
     public void update(double deltaTime) {
+        capturePreviousPosition();
         if (isDead || deathHandled) return;
 
         if (freezeTimer > 0) {

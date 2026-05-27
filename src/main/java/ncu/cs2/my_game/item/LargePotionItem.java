@@ -20,6 +20,11 @@ public class LargePotionItem extends PickupItem {
     }
 
     @Override
+    public boolean canUse(UseContext context) {
+        return context.getPlayer().getHp() < context.getPlayer().getMaxHp();
+    }
+
+    @Override
     protected Color getFillColor() { return Color.DARKGREEN; }
 
     @Override

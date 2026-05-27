@@ -42,4 +42,10 @@ public class GoldSpawnManager {
             existingItems, extraOccupied);
         return new GoldPickup(point.getX(), point.getY(), amount);
     }
+
+    public GoldPickup spawnDrop(int amount, double deathX, double deathY) {
+        GoldPickup gold = new GoldPickup(deathX, deathY, amount);
+        gold.beginFall();
+        return gold;
+    }
 }

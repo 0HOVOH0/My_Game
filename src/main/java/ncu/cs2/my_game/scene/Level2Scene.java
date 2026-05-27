@@ -27,6 +27,7 @@ import ncu.cs2.my_game.item.ItemSpawnResolver;
 import ncu.cs2.my_game.item.ItemSpawnManager;
 import ncu.cs2.my_game.item.PickupItem;
 import ncu.cs2.my_game.item.PickupType;
+import ncu.cs2.my_game.item.PotionInventory;
 import ncu.cs2.my_game.item.UseContext;
 import ncu.cs2.my_game.map.DungeonMapRenderer;
 import ncu.cs2.my_game.map.MapValidationResult;
@@ -68,7 +69,6 @@ public class Level2Scene extends AnimationTimer {
     // ── 地圖常數 ─────────────────────────────────────────────────────────────
 
     /** 地板 Y 座標 */
-    private static final double GROUND_Y = Config.WINDOW_HEIGHT - Config.GROUND_THICKNESS;
 
     /** 普通關世界寬度，Canvas 只顯示其中一段。 */
     private static final double WORLD_WIDTH = TileMap.TILE_SIZE * 96.0;
@@ -146,6 +146,9 @@ public class Level2Scene extends AnimationTimer {
 
     /** 跨關卡背包 */
     private final Inventory inventory;
+
+    /** 跨關卡藥水欄，與三格一般道具分開保存。 */
+    private final PotionInventory potionInventory;
 
     /** 敵人掉落是否已處理 */
     private final boolean[] enemyDropsHandled;
@@ -225,7 +228,8 @@ public class Level2Scene extends AnimationTimer {
         Main.registerActiveScene("LEVEL_2", 2, GameState.PLAYING, this::cleanup);
 
         // ── 地板 ──────────────────────────────────────────────────────────────
-        ground = new Rectangle2D(0, GROUND_Y, WORLD_WIDTH, Config.GROUND_THICKNESS);
+        double mapGroundY = (tileMap.getHeightTiles() - 1) * TileMap.TILE_SIZE;
+        ground = new Rectangle2D(0, mapGroundY, WORLD_WIDTH, TileMap.TILE_SIZE);
 
         platforms = createProceduralPlatforms();
         covers = createCoverWalls();
@@ -244,6 +248,7 @@ public class Level2Scene extends AnimationTimer {
         goldPickups = new ArrayList<>();
         bombs = new ArrayList<>();
         inventory = Main.getInventory();
+        potionInventory = Main.getPotionInventory();
         enemyDropsHandled = new boolean[enemies.length];
         itemSpawnManager = new ItemSpawnManager(ground, platforms, covers);
         goldSpawnManager = new GoldSpawnManager(ground, platforms, covers);
@@ -292,6 +297,7 @@ public class Level2Scene extends AnimationTimer {
                 effectManager.playSlash(player);
             }
             handleInventoryKey(e.getCode());
+            handlePotionKey(e.getCode());
             if (e.getCode() == KeyCode.B) {
                 inventoryOpen = !inventoryOpen;
             }
@@ -408,6 +414,7 @@ public class Level2Scene extends AnimationTimer {
 
         // 9. 敵人死亡掉落
         checkEnemyDrops();
+        updateFallingDrops(dt);
 
         // 10. 地板道具拾取
         checkPickupItems();
@@ -437,6 +444,17 @@ public class Level2Scene extends AnimationTimer {
             return;
         }
         inventory.useSlot(slotIndex, new UseContext(player, enemies, null, bombs));
+    }
+
+    private void handlePotionKey(KeyCode key) {
+        int slotIndex = keyToPotionSlotIndex(key);
+        if (slotIndex < 0) return;
+        if (trySwapGroundPotion(slotIndex)) return;
+        InventorySlot slot = potionInventory.getSlot(slotIndex);
+        boolean used = potionInventory.useSlot(slotIndex, new UseContext(player, enemies, null, bombs));
+        if (!used && slot != null && !slot.isEmpty() && player.getHp() >= player.getMaxHp()) {
+            showPickupNotice("HP Full");
+        }
     }
 
     private void tryResolvePlayerStandUp() {
@@ -476,6 +494,9 @@ public class Level2Scene extends AnimationTimer {
 
         List<Integer> candidates = new ArrayList<>();
         for (int i = 1; i < platforms.length; i++) {
+            if (!isValidatedReachablePlatform(platforms[i])) {
+                continue;
+            }
             Rectangle2D patrolSegment = safeEnemyPatrolSegment(platforms[i]);
             if (patrolSegment != null && patrolSegment.getWidth() >= MIN_ENEMY_PATROL_WIDTH) {
                 candidates.add(i);
@@ -503,9 +524,9 @@ public class Level2Scene extends AnimationTimer {
         if (stageDefinition.getDifficulty() >= 8) {
             double leftGround = 720 + random.nextDouble() * 240;
             double rightGround = 1130 + random.nextDouble() * 220;
-            snapshots.add(new EnemySnapshot(leftGround, GROUND_Y - Enemy.ENEMY_H, leftGround - 110, leftGround + 140,
+            snapshots.add(new EnemySnapshot(leftGround, ground.getMinY() - Enemy.ENEMY_H, leftGround - 110, leftGround + 140,
                 false, hpScale, damageScale, speedScale, projectileScale));
-            snapshots.add(new EnemySnapshot(rightGround, GROUND_Y - Enemy.ENEMY_H, rightGround - 110, rightGround + 160,
+            snapshots.add(new EnemySnapshot(rightGround, ground.getMinY() - Enemy.ENEMY_H, rightGround - 110, rightGround + 160,
                 true, hpScale, damageScale, speedScale, projectileScale));
         }
         return snapshots;
@@ -598,6 +619,24 @@ public class Level2Scene extends AnimationTimer {
             }
         }
         return actualPlatforms.toArray(Rectangle2D[]::new);
+    }
+
+    /**
+     * Keep combat and collectible placement off optional ledges that did not
+     * pass the map generator's player-reachability graph.
+     */
+    private boolean isValidatedReachablePlatform(Rectangle2D platform) {
+        PlatformValidationResult validation = tileMap.getValidationResult();
+        if (validation == null) return true;
+        for (Rectangle2D unreachable : validation.unreachablePlatforms()) {
+            boolean sameHeight = Math.abs(unreachable.getMinY() - platform.getMinY()) < 1.5;
+            boolean overlaps = unreachable.getMaxX() > platform.getMinX()
+                && unreachable.getMinX() < platform.getMaxX();
+            if (sameHeight && overlaps) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private double rand(double min, double max) {
@@ -779,14 +818,10 @@ public class Level2Scene extends AnimationTimer {
      * 找到第一個碰撞面即停止，避免多平台邊緣衝突。
      */
     private void resolvePlayerPlatformCollisions() {
-        boolean groundedOnSolid = false;
         for (Rectangle2D cover : covers) {
-            int result = Collision.resolveSolid(player, cover);
-            if (result == -1) {
-                groundedOnSolid = true;
-            }
+            Collision.resolveSolid(player, cover);
         }
-        if (groundedOnSolid) {
+        if (hasSolidSupportUnderPlayer()) {
             player.setOnGround(true);
             return;
         }
@@ -811,6 +846,19 @@ public class Level2Scene extends AnimationTimer {
 
         // 沒踩到任何表面：玩家在空中
         player.setOnGround(false);
+    }
+
+    private boolean hasSolidSupportUnderPlayer() {
+        Rectangle2D hitbox = player.getHitbox();
+        double feetY = hitbox.getMaxY();
+        for (Rectangle2D cover : covers) {
+            boolean horizontalSupport = hitbox.getMaxX() > cover.getMinX() + 1
+                && hitbox.getMinX() < cover.getMaxX() - 1;
+            if (horizontalSupport && Math.abs(feetY - cover.getMinY()) <= 1.5) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void updatePlayerPlatformDrop(double dt) {
@@ -990,11 +1038,12 @@ public class Level2Scene extends AnimationTimer {
             if (enemy == null || enemyDropsHandled[i] || enemy.isAlive()) continue;
 
             enemyDropsHandled[i] = true;
-            addGold(random.nextInt(10) + 1,
+            addFallingGold(random.nextInt(10) + 1,
                 enemy.getX(), enemy.getY() + enemy.getHeight() - GoldPickup.SIZE);
             PickupType drop = rollEnemyDrop();
             if (drop != null) {
-                addPickup(drop, enemy.getX(), enemy.getY() + enemy.getHeight() - PickupItem.SIZE);
+                addFallingPickup(drop, enemy.getX(),
+                    enemy.getY() + enemy.getHeight() - PickupItem.SIZE);
             }
         }
     }
@@ -1024,6 +1073,23 @@ public class Level2Scene extends AnimationTimer {
     private void addGold(int amount, double x, double y) {
         goldSpawnManager.setForbiddenZones(createHazardForbiddenZones());
         goldPickups.add(goldSpawnManager.spawn(amount, x, y, pickupItems, goldPickups));
+    }
+
+    private void addFallingPickup(PickupType type, double x, double y) {
+        pickupItems.add(itemSpawnManager.spawnDrop(type, x, y, 1));
+    }
+
+    private void addFallingGold(int amount, double x, double y) {
+        goldPickups.add(goldSpawnManager.spawnDrop(amount, x, y));
+    }
+
+    private void updateFallingDrops(double dt) {
+        for (PickupItem item : pickupItems) {
+            item.updateFalling(dt, ground, platforms, covers);
+        }
+        for (GoldPickup gold : goldPickups) {
+            gold.updateFalling(dt, ground, platforms, covers);
+        }
     }
 
     private List<Rectangle2D> createHazardForbiddenZones() {
@@ -1058,7 +1124,8 @@ public class Level2Scene extends AnimationTimer {
 
         List<Integer> supplyPlatforms = new ArrayList<>();
         for (int i = 0; i < platforms.length; i++) {
-            if (platforms[i].getWidth() >= PickupItem.SIZE + 24) {
+            if (isValidatedReachablePlatform(platforms[i])
+                    && platforms[i].getWidth() >= PickupItem.SIZE + 24) {
                 supplyPlatforms.add(i);
             }
         }
@@ -1080,8 +1147,21 @@ public class Level2Scene extends AnimationTimer {
     private double[] randomPickupPoint(int minPlatformIndex, int maxPlatformIndex) {
         int min = Math.max(0, Math.min(minPlatformIndex, platforms.length - 1));
         int max = Math.max(min, Math.min(maxPlatformIndex, platforms.length - 1));
-        return pickupPoint(min + random.nextInt(max - min + 1),
-            0.18 + random.nextDouble() * 0.64);
+        List<Integer> candidates = new ArrayList<>();
+        for (int i = min; i <= max; i++) {
+            if (isValidatedReachablePlatform(platforms[i])) {
+                candidates.add(i);
+            }
+        }
+        if (candidates.isEmpty()) {
+            for (int i = 0; i < platforms.length; i++) {
+                if (isValidatedReachablePlatform(platforms[i])) {
+                    candidates.add(i);
+                }
+            }
+        }
+        int platformIndex = candidates.isEmpty() ? min : candidates.get(random.nextInt(candidates.size()));
+        return pickupPoint(platformIndex, 0.18 + random.nextDouble() * 0.64);
     }
 
     private double[] pickupPoint(int platformIndex, double ratio) {
@@ -1128,7 +1208,10 @@ public class Level2Scene extends AnimationTimer {
         for (PickupItem item : pickupItems) {
             if (item.isPickedUp()) continue;
             if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
-                if (inventory.add(item.getType(), item.getQuantity())) {
+                boolean accepted = item.getType().isPotion()
+                    ? potionInventory.add(item.getType(), item.getQuantity())
+                    : inventory.add(item.getType(), item.getQuantity());
+                if (accepted) {
                     item.markPickedUp();
                     showPickupNotice("+" + item.getType().getHudLabel());
                 }
@@ -1188,14 +1271,41 @@ public class Level2Scene extends AnimationTimer {
         return true;
     }
 
+    private boolean trySwapGroundPotion(int slotIndex) {
+        PickupItem groundItem = findBlockedPotionUnderPlayer();
+        if (groundItem == null) return false;
+
+        InventorySlot dropped = potionInventory.replaceSlot(slotIndex,
+            groundItem.getType(), groundItem.getQuantity());
+        if (dropped == null) return false;
+
+        groundItem.markPickedUp();
+        addPickup(dropped.getType(), player.getX(),
+            player.getY() + player.getHeight() - PickupItem.SIZE, dropped.getCount());
+        pickupItems.removeIf(PickupItem::isPickedUp);
+        showPickupNotice("Potion swapped");
+        return true;
+    }
+
     private PickupItem findBlockedPickupUnderPlayer() {
         if (!inventory.isFull()) return null;
         for (PickupItem item : pickupItems) {
             if (item.isPickedUp()) continue;
+            if (item.getType().isPotion()) continue;
             if (inventory.contains(item.getType())) continue;
             if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
                 return item;
             }
+        }
+        return null;
+    }
+
+    private PickupItem findBlockedPotionUnderPlayer() {
+        if (!potionInventory.isFull()) return null;
+        for (PickupItem item : pickupItems) {
+            if (item.isPickedUp() || !item.getType().isPotion()) continue;
+            if (potionInventory.contains(item.getType())) continue;
+            if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) return item;
         }
         return null;
     }
@@ -1205,6 +1315,14 @@ public class Level2Scene extends AnimationTimer {
             case U -> 0;
             case I -> 1;
             case O -> 2;
+            default -> -1;
+        };
+    }
+
+    private int keyToPotionSlotIndex(KeyCode key) {
+        return switch (key) {
+            case N -> 0;
+            case M -> 1;
             default -> -1;
         };
     }
@@ -1415,11 +1533,18 @@ public class Level2Scene extends AnimationTimer {
      */
     private void drawHUD(GraphicsContext gc) {
         HudRenderer.drawPlayerStatus(gc, player, stageDefinition.getHudTitle());
+        HudRenderer.drawStageProgress(gc, player.getX(), tileMap.getSpawnX(),
+            goalDoor.getMinX() + goalDoor.getWidth() / 2.0);
         HudRenderer.drawGold(gc, Main.getGold());
         HudRenderer.drawInventorySlots(gc, inventory, selectedInventorySlot);
+        HudRenderer.drawPotionSlots(gc, potionInventory);
         PickupItem blockedItem = findBlockedPickupUnderPlayer();
         if (blockedItem != null) {
             HudRenderer.drawBackpackFullPrompt(gc, inventory, blockedItem);
+        }
+        PickupItem blockedPotion = findBlockedPotionUnderPlayer();
+        if (blockedPotion != null) {
+            HudRenderer.drawPotionFullPrompt(gc, potionInventory, blockedPotion);
         }
         if (inventoryOpen) {
             HudRenderer.drawInventoryOverlay(gc, inventory, selectedInventorySlot);

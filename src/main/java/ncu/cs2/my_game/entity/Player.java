@@ -185,6 +185,7 @@ public class Player extends Entity {
      */
     @Override
     public void update(double deltaTime) {
+        capturePreviousPosition();
         // 1. 套用重力加速度（修改 velocityY）
         Gravity.apply(this, deltaTime);
 

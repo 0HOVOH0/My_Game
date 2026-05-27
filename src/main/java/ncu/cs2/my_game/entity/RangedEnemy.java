@@ -88,6 +88,21 @@ public class RangedEnemy extends Enemy {
         return false;
     }
 
+    @Override
+    protected boolean usesPatrolZoneDetection() {
+        return false;
+    }
+
+    @Override
+    protected boolean canLeavePatrolPlatformWhileChasing() {
+        return false;
+    }
+
+    @Override
+    protected boolean steersTowardPlayerWhileChasing() {
+        return false;
+    }
+
     private void keepDistance(double deltaTime) {
         if (!hasLineOfSightToPlayer()) return;
 
