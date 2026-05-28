@@ -277,6 +277,10 @@ public class Main extends Application {
         return nextStageDefinition;
     }
 
+    public static String peekNextSceneLabel() {
+        return (normalStagesInCycle + 1 >= NORMAL_STAGES_BEFORE_SHOP) ? "SHOP" : "NEXT";
+    }
+
     public static TileMap pickNormalStageMap() {
         return mapPoolManager.pickNormalMap();
     }

@@ -224,7 +224,13 @@ public class Level2Scene extends AnimationTimer {
         player.setMana(Main.getPersistedMana());
         player.startInvincibility(Config.PLAYER_SPAWN_PROTECTION_SECONDS);
         effectManager = new EffectManager();
-        flowController = GameFlowController.forScene(this::cleanup, () -> Main.startLevel2());
+        // R 鍵回滾至初始快照（同一張地圖），Shift+R 才回到 Level1 重新開始
+        flowController = new GameFlowController(
+            this::rollbackToInitialSnapshot,
+            () -> { cleanup(); Main.startLevel1(); },
+            () -> { cleanup(); Main.exitToMainMenu(); },
+            () -> { cleanup(); javafx.application.Platform.exit(); }
+        );
         Main.registerActiveScene("LEVEL_2", 2, GameState.PLAYING, this::cleanup);
 
         // ── 地板 ──────────────────────────────────────────────────────────────
@@ -281,9 +287,12 @@ public class Level2Scene extends AnimationTimer {
         // ── 綁定鍵盤事件 ──────────────────────────────────────────────────────
         javafxScene.setOnKeyPressed(e -> {
             if (SceneTransitionManager.isTransitioning()) return;
-            if (!player.isAlive() && e.getCode() == KeyCode.R) {
-                rKeyPressed = true;
-                e.consume();
+            // 死亡狀態：只允許 R 鍵（重生），封鎖所有其他按鍵
+            if (!player.isAlive()) {
+                if (e.getCode() == KeyCode.R) {
+                    rKeyPressed = true;
+                    e.consume();
+                }
                 return;
             }
             if (isPortalEnterKey(e.getCode()) && isNearGoalDoor()) {
@@ -1380,7 +1389,7 @@ public class Level2Scene extends AnimationTimer {
      * @param gc 畫布繪圖上下文
      */
     private void render(GraphicsContext gc) {
-        DungeonMapRenderer.draw(gc, tileMap, cameraX, "BOSS");
+        DungeonMapRenderer.draw(gc, tileMap, cameraX, Main.peekNextSceneLabel());
         if (flowController.isDebugVisible()) {
             DungeonMapRenderer.drawDebug(gc, tileMap, cameraX);
         }

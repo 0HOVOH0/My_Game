@@ -50,11 +50,12 @@ import java.util.Random;
  * IDLE → CHASE → DASH（HP &lt; 60%）→ RAGE（HP &lt; 30%）。</p>
  *
  * <pre>
- * 房間配置（y 軸向下）：
+ * 房間配置（y 軸向下，GROUND_Y = WINDOW_HEIGHT - GROUND_THICKNESS = 582）：
  *
- *  y=340  [P2 中央高台]
- *  y=420  [P1 左低台]               [P3 右低台]   ← Boss 從右側登場
- *  y=550  =================== GROUND ===================
+ *  y≈270  [P6 頂台]                              ← 距中台 ≈112 px（玩家可跳到）
+ *  y≈382  [P4 中左台]   [P5 中右台]              ← 距低台 ≈108 px
+ *  y≈490  [P1 左低台]  [P2 中低台]  [P3 右低台]  ← 距地板  ≈92 px（Boss 也可跳到）
+ *  y=582  ============== GROUND ===============
  * </pre>
  *
  * <p>階段提示：</p>
@@ -223,6 +224,7 @@ public class BossScene extends AnimationTimer {
     private double bossPlatformDropTimer = 0;
     private Rectangle2D bossExitDoor = null;
     private double fps = 0;
+    private double visualTime = 0;
     private String pickupNotice = "";
     private double pickupNoticeTimer = 0;
 
@@ -265,12 +267,14 @@ public class BossScene extends AnimationTimer {
 
         // ── 三個閃躲用平台 ────────────────────────────────────────────────────
         platforms = new Rectangle2D[] {
-            new Rectangle2D( 36 + bossRand(-8, 14), 452 + bossRand(-6, 8), bossPlatformWidth(7, 9), PLAT_H),
-            new Rectangle2D(330 + bossRand(-14, 16), 452 + bossRand(-6, 8), bossPlatformWidth(7, 9), PLAT_H),
-            new Rectangle2D(615 + bossRand(-12, 10), 452 + bossRand(-6, 8), bossPlatformWidth(6, 8), PLAT_H),
-            new Rectangle2D(150 + bossRand(-12, 18), 326 + bossRand(-8, 10), bossPlatformWidth(6, 8), PLAT_H),
-            new Rectangle2D(515 + bossRand(-16, 12), 326 + bossRand(-8, 10), bossPlatformWidth(6, 8), PLAT_H),
-            new Rectangle2D(335 + bossRand(-14, 14), 202 + bossRand(-6, 8), bossPlatformWidth(5, 7), PLAT_H),
+            // GROUND_Y=582, 玩家最大跳高≈127px，Boss 最大跳高≈99px
+            // 低台 y≈490（距地板 ~92px）、中台 y≈382（距低台 ~108px）、頂台 y≈270（距中台 ~112px）
+            new Rectangle2D( 36 + bossRand(-8, 14), 490 + bossRand(-6, 8), bossPlatformWidth(7, 9), PLAT_H),
+            new Rectangle2D(330 + bossRand(-14, 16), 490 + bossRand(-6, 8), bossPlatformWidth(7, 9), PLAT_H),
+            new Rectangle2D(615 + bossRand(-12, 10), 490 + bossRand(-6, 8), bossPlatformWidth(6, 8), PLAT_H),
+            new Rectangle2D(150 + bossRand(-12, 18), 382 + bossRand(-8, 10), bossPlatformWidth(6, 8), PLAT_H),
+            new Rectangle2D(515 + bossRand(-16, 12), 382 + bossRand(-8, 10), bossPlatformWidth(6, 8), PLAT_H),
+            new Rectangle2D(335 + bossRand(-14, 14), 270 + bossRand(-6, 8), bossPlatformWidth(5, 7), PLAT_H),
         };
         covers = new Rectangle2D[0];
         visionBlockers = platforms;
@@ -348,6 +352,7 @@ public class BossScene extends AnimationTimer {
         if (dt > Config.MAX_DELTA_TIME) dt = Config.MAX_DELTA_TIME;
         fps = dt > 0 ? 1.0 / dt : 0;
         SceneTransitionManager.tick(dt);
+        visualTime += dt;
 
         if (!flowController.isPaused()) {
             update(dt);
@@ -1268,17 +1273,13 @@ public class BossScene extends AnimationTimer {
      * @param gc 畫布繪圖上下文
      */
     private void render(GraphicsContext gc) {
-        // 1. 背景（暗紫色，營造 Boss 戰氛圍）
-        // TODO: 換成帶有光效的 Boss 戰背景圖片
-        gc.setFill(Color.web("#1a0025"));
-        gc.fillRect(0, 0, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
+        // 1. 背景：火焰地下城布景
+        drawBossBackground(gc);
 
-        // 2. 地板（TODO: 換成地面圖塊）
-        gc.setFill(Color.web("#5a3a1a"));
-        gc.fillRect(ground.getMinX(), ground.getMinY(),
-                    ground.getWidth(), ground.getHeight());
+        // 2. 地板：火山熔岩紋理
+        drawBossGround(gc);
 
-        // 3. 閃躲平台（TODO: 換成石板 Tileset）
+        // 3. 閃躲平台：深色火山石板
         drawPlatforms(gc);
         drawCovers(gc);
 
@@ -1325,22 +1326,120 @@ public class BossScene extends AnimationTimer {
         flowController.drawPauseOverlay(gc);
     }
 
-    /**
-     * 繪製三個閃躲平台（深灰石板色）。
-     * TODO: 換成 Tileset 圖塊後移除此方法。
-     *
-     * @param gc 畫布繪圖上下文
-     */
     private void drawPlatforms(GraphicsContext gc) {
         for (Rectangle2D p : platforms) {
-            // 平台本體（深灰石板）
-            gc.setFill(Color.web("#37474f"));
+            double glow = 0.35 + 0.15 * Math.sin(visualTime * 2.2 + p.getMinX() * 0.02);
+            // 主體：深色火山岩
+            gc.setFill(Color.web("#2a1010"));
             gc.fillRect(p.getMinX(), p.getMinY(), p.getWidth(), p.getHeight());
-
-            // 平台上緣較亮線條，增加立體感
-            gc.setFill(Color.web("#546e7a"));
+            // 頂面高光（暗紅調）
+            gc.setFill(Color.web("#4a2010"));
             gc.fillRect(p.getMinX(), p.getMinY(), p.getWidth(), 3);
+            // 頂緣熔岩邊光（動態）
+            gc.save();
+            gc.setGlobalAlpha(glow);
+            gc.setFill(Color.web("#cc3300"));
+            gc.fillRect(p.getMinX(), p.getMinY(), p.getWidth(), 2);
+            gc.restore();
+            // 石塊紋路
+            gc.setStroke(Color.web("#1a0808"));
+            gc.setLineWidth(1);
+            gc.strokeLine(p.getMinX() + p.getWidth() / 3.0, p.getMinY() + 3,
+                          p.getMinX() + p.getWidth() / 3.0, p.getMinY() + p.getHeight() - 2);
+            gc.strokeLine(p.getMinX() + p.getWidth() * 2.0 / 3, p.getMinY() + 3,
+                          p.getMinX() + p.getWidth() * 2.0 / 3, p.getMinY() + p.getHeight() - 2);
         }
+    }
+
+    private void drawBossBackground(GraphicsContext gc) {
+        // 基底深紫色
+        gc.setFill(Color.web("#1a0025"));
+        gc.fillRect(0, 0, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
+        // 兩側暗影面板
+        gc.setFill(Color.web("#0d0015", 0.65));
+        gc.fillRect(0, 0, 55, Config.WINDOW_HEIGHT);
+        gc.fillRect(Config.WINDOW_WIDTH - 55, 0, 55, Config.WINDOW_HEIGHT);
+        // 石柱
+        drawBossPillar(gc, 22, 38);
+        drawBossPillar(gc, Config.WINDOW_WIDTH - 60, 38);
+        // 火炬（石柱頂端）
+        drawBossTorch(gc, 41, GROUND_Y - 340);
+        drawBossTorch(gc, Config.WINDOW_WIDTH - 41, GROUND_Y - 340);
+        // 地面熔岩熱氣暈
+        double haze = 0.18 + 0.06 * Math.sin(visualTime * 1.4);
+        gc.save();
+        gc.setGlobalAlpha(haze);
+        gc.setFill(Color.web("#cc2200"));
+        gc.fillRect(0, GROUND_Y - 72, Config.WINDOW_WIDTH, 72);
+        gc.restore();
+    }
+
+    private void drawBossPillar(GraphicsContext gc, double x, double width) {
+        double h = GROUND_Y - 20;
+        gc.setFill(Color.web("#200820"));
+        gc.fillRect(x, 0, width, h);
+        gc.setFill(Color.web("#2e1030"));
+        gc.fillRect(x, 0, 5, h);
+        gc.setFill(Color.web("#140c18"));
+        gc.fillRect(x + width - 5, 0, 5, h);
+        gc.setFill(Color.web("#3a1040"));
+        gc.fillRect(x - 5, 0, width + 10, 14);
+        gc.setFill(Color.web("#4a1855"));
+        gc.fillRect(x - 5, 0, width + 10, 4);
+        gc.setFill(Color.web("#3a1040"));
+        gc.fillRect(x - 5, GROUND_Y - 14, width + 10, 14);
+    }
+
+    private void drawBossTorch(GraphicsContext gc, double cx, double y) {
+        double flicker = 0.75 + 0.25 * Math.sin(visualTime * 4.8 + cx);
+        gc.setFill(Color.web("#3a1a06"));
+        gc.fillRect(cx - 3, y, 6, 24);
+        gc.save();
+        gc.setGlobalAlpha(0.10 * flicker);
+        gc.setFill(Color.web("#ff4400"));
+        gc.fillOval(cx - 38, y - 40, 76, 64);
+        gc.restore();
+        gc.save();
+        gc.setGlobalAlpha(0.80 * flicker);
+        gc.setFill(Color.web("#cc2200"));
+        gc.fillOval(cx - 9, y - 16, 18, 22);
+        gc.restore();
+        gc.save();
+        gc.setGlobalAlpha(0.90 * flicker);
+        gc.setFill(Color.web("#ff6600"));
+        gc.fillOval(cx - 6, y - 12, 12, 16);
+        gc.restore();
+        gc.save();
+        gc.setGlobalAlpha(0.95 * flicker);
+        gc.setFill(Color.web("#ffcc00"));
+        gc.fillOval(cx - 3, y - 7, 6, 9);
+        gc.restore();
+    }
+
+    private void drawBossGround(GraphicsContext gc) {
+        // 基底火山岩
+        gc.setFill(Color.web("#2a1406"));
+        gc.fillRect(ground.getMinX(), ground.getMinY(), ground.getWidth(), ground.getHeight());
+        // 石磚分割
+        gc.setFill(Color.web("#1e0d04"));
+        gc.setStroke(Color.web("#1a0c03"));
+        gc.setLineWidth(1);
+        for (int col = 0; col * 64 < (int) Config.WINDOW_WIDTH; col++) {
+            gc.fillRect(col * 64 + 1, ground.getMinY() + 1, 62, 18);
+            gc.strokeLine(col * 64, ground.getMinY(), col * 64, ground.getMinY() + ground.getHeight());
+        }
+        // 熔岩裂縫（動態發光）
+        double lavaGlow = 0.55 + 0.20 * Math.sin(visualTime * 2.0);
+        gc.save();
+        gc.setGlobalAlpha(lavaGlow);
+        gc.setFill(Color.web("#ff2200"));
+        for (int pos : new int[]{80, 210, 370, 510, 660}) {
+            gc.fillRect(pos, ground.getMinY() + 3, 3, 14);
+        }
+        gc.restore();
+        // 地面頂緣高光
+        gc.setFill(Color.web("#3d1a08"));
+        gc.fillRect(ground.getMinX(), ground.getMinY(), ground.getWidth(), 3);
     }
 
     private void drawCovers(GraphicsContext gc) {
@@ -1354,20 +1453,60 @@ public class BossScene extends AnimationTimer {
 
     private void drawBossExitDoor(GraphicsContext gc) {
         if (bossExitDoor == null) return;
+        double x = bossExitDoor.getMinX();
+        double y = bossExitDoor.getMinY();
+        double w = bossExitDoor.getWidth();
+        double h = bossExitDoor.getHeight();
+        double pulse = 0.6 + 0.3 * Math.sin(visualTime * 2.8);
+
+        // 外部金色暈光（搏動）
         gc.save();
-        gc.setGlobalAlpha(0.35);
+        gc.setGlobalAlpha(0.12 * pulse);
         gc.setFill(Color.GOLD);
-        gc.fillRect(bossExitDoor.getMinX(), bossExitDoor.getMinY(),
-                    bossExitDoor.getWidth(), bossExitDoor.getHeight());
+        gc.fillOval(x - 22, y - 14, w + 44, h + 28);
         gc.restore();
+
+        // 石拱兩側柱
+        gc.setFill(Color.web("#221808"));
+        gc.fillRect(x - 10, y, 10, h + 2);
+        gc.fillRect(x + w, y, 10, h + 2);
+        gc.fillRoundRect(x - 12, y - 8, w + 24, 18, 6, 6);
+        // 拱柱高光
+        gc.setFill(Color.web("#3d2e10"));
+        gc.fillRect(x - 10, y, 3, h);
+        gc.fillRect(x + w + 7, y, 3, h);
+        gc.fillRect(x - 12, y - 8, w + 24, 4);
+
+        // 門洞底色
+        gc.setFill(Color.web("#1a1000"));
+        gc.fillRect(x, y, w, h);
+        // 金色光暈疊層
+        gc.save();
+        gc.setGlobalAlpha(0.45 * pulse);
+        gc.setFill(Color.GOLD);
+        gc.fillRect(x, y, w, h);
+        gc.restore();
+        // 深色遮罩（凸顯門框）
+        gc.save();
+        gc.setGlobalAlpha(0.5);
+        gc.setFill(Color.web("#2a1800"));
+        gc.fillRoundRect(x + 4, y + 6, w - 8, h - 12, 4, 4);
+        gc.restore();
+        // 上方高光帶（折射感）
+        gc.save();
+        gc.setGlobalAlpha(0.35 + 0.15 * Math.sin(visualTime * 3.5));
+        gc.setFill(Color.web("#ffe090"));
+        gc.fillRoundRect(x + 6, y + 8, w - 12, (h - 16) * 0.35, 3, 3);
+        gc.restore();
+
         gc.setStroke(Color.GOLD);
-        gc.setLineWidth(3);
-        gc.strokeRect(bossExitDoor.getMinX(), bossExitDoor.getMinY(),
-                      bossExitDoor.getWidth(), bossExitDoor.getHeight());
+        gc.setLineWidth(2.5);
+        gc.strokeRect(x, y, w, h);
+
         if (Collision.checkAABB(player.getHitbox(), inflate(bossExitDoor, 14))) {
             gc.setFill(Color.WHITE);
             gc.setFont(Font.font(14));
-            gc.fillText("Press Enter", bossExitDoor.getMinX() - 24, bossExitDoor.getMinY() - 12);
+            gc.fillText("Press Enter", x - 24, y - 12);
         }
     }
 

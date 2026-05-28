@@ -57,6 +57,10 @@ public class ShopScene extends AnimationTimer {
     private boolean transitioning;
     private boolean portalEnterRequested;
 
+    // 浮板動畫
+    private final double[] platformBaseY;
+    private double platformTime;
+
     public ShopScene(Stage stage) {
         this.stage = stage;
 
@@ -71,9 +75,13 @@ public class ShopScene extends AnimationTimer {
 
         ground = new Rectangle2D(0, GROUND_Y, Config.WINDOW_WIDTH, Config.GROUND_THICKNESS);
         platforms = new Rectangle2D[] {
-            new Rectangle2D(180, 440, 120, 16),
-            new Rectangle2D(500, 410, 120, 16)
+            new Rectangle2D(160, 435, 130, 20),
+            new Rectangle2D(490, 405, 130, 20)
         };
+        platformBaseY = new double[platforms.length];
+        for (int i = 0; i < platforms.length; i++) {
+            platformBaseY[i] = platforms[i].getMinY();
+        }
         shopCounter = new Rectangle2D(335, GROUND_Y - 54, 130, 54);
         exitDoor = new Rectangle2D(Config.WINDOW_WIDTH - 72, GROUND_Y - 120, 46, 120);
 
@@ -153,6 +161,19 @@ public class ShopScene extends AnimationTimer {
     }
 
     private void update(double dt) {
+        // 浮板動畫：兩塊浮板以正弦波上下飄動，相位差 π 讓它們反向運動
+        platformTime += dt;
+        for (int i = 0; i < platforms.length; i++) {
+            double phase = i * Math.PI;
+            double offsetY = Math.sin(platformTime * 1.1 + phase) * 13.0;
+            platforms[i] = new Rectangle2D(
+                platforms[i].getMinX(),
+                platformBaseY[i] + offsetY,
+                platforms[i].getWidth(),
+                platforms[i].getHeight()
+            );
+        }
+
         player.update(dt);
         updatePlayerPlatformDrop(dt);
         resolveCollisions();
@@ -322,18 +343,20 @@ public class ShopScene extends AnimationTimer {
     }
 
     private void render() {
-        gc.setFill(Color.web("#152022"));
+        // ── 背景：地牢石壁 ─────────────────────────────────────────────────────
+        gc.setFill(Color.web("#121219"));
         gc.fillRect(0, 0, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
 
-        gc.setFill(Color.web("#5a3a1a"));
-        gc.fillRect(ground.getMinX(), ground.getMinY(), ground.getWidth(), ground.getHeight());
-        gc.setFill(Color.web("#3f6f76"));
-        for (Rectangle2D platform : platforms) {
-            gc.fillRect(platform.getMinX(), platform.getMinY(), platform.getWidth(), platform.getHeight());
-        }
-
-        drawShopCounter();
+        drawDungeonWall();
+        drawStoneFloor();
+        drawPillar(30,  36, GROUND_Y - 60);
+        drawPillar(734, 36, GROUND_Y - 60);
+        drawTorch(58,  GROUND_Y - 220);
+        drawTorch(710, GROUND_Y - 220);
+        drawShopBuilding();
+        drawFloatingPlatforms();
         drawExitDoor();
+
         for (PickupItem item : pickupItems) item.draw(gc);
         player.draw(gc);
 
@@ -349,6 +372,164 @@ public class ShopScene extends AnimationTimer {
         if (messageTimer > 0) drawMessage();
     }
 
+    /** 後方石壁：深色磚塊紋路 */
+    private void drawDungeonWall() {
+        int tileW = 64, tileH = 32;
+        for (int row = 0; row * tileH < GROUND_Y; row++) {
+            for (int col = 0; col * tileW < Config.WINDOW_WIDTH + tileW; col++) {
+                int offsetX = (row % 2 == 0) ? 0 : tileW / 2;
+                double x = col * tileW - offsetX;
+                double y = row * tileH;
+                gc.setFill(Color.web(row % 5 == 0 ? "#16161f" : "#1a1a24"));
+                gc.fillRect(x + 1, y + 1, tileW - 2, tileH - 2);
+                gc.setStroke(Color.web("#0e0e16"));
+                gc.setLineWidth(1);
+                gc.strokeRect(x, y, tileW, tileH);
+            }
+        }
+    }
+
+    /** 地板：石板磚格 */
+    private void drawStoneFloor() {
+        double gy = GROUND_Y;
+        double fh = ground.getHeight();
+        int tileW = 64;
+        gc.setFill(Color.web("#252530"));
+        gc.fillRect(0, gy, Config.WINDOW_WIDTH, fh);
+        gc.setStroke(Color.web("#1a1a22"));
+        gc.setLineWidth(1);
+        for (int col = 0; col * tileW < Config.WINDOW_WIDTH; col++) {
+            gc.strokeLine(col * tileW, gy, col * tileW, gy + fh);
+        }
+        gc.strokeLine(0, gy + fh / 2, Config.WINDOW_WIDTH, gy + fh / 2);
+        // 上沿高光
+        gc.setFill(Color.web("#363645"));
+        gc.fillRect(0, gy, Config.WINDOW_WIDTH, 4);
+    }
+
+    /** 石柱 */
+    private void drawPillar(double x, double width, double topY) {
+        double h = GROUND_Y - topY;
+        // 柱身
+        gc.setFill(Color.web("#252530"));
+        gc.fillRect(x, topY, width, h);
+        // 左邊高光
+        gc.setFill(Color.web("#333340"));
+        gc.fillRect(x, topY, 5, h);
+        // 右邊陰影
+        gc.setFill(Color.web("#18181f"));
+        gc.fillRect(x + width - 5, topY, 5, h);
+        // 頂蓋
+        gc.setFill(Color.web("#3e3e50"));
+        gc.fillRect(x - 5, topY, width + 10, 12);
+        gc.setFill(Color.web("#4a4a5c"));
+        gc.fillRect(x - 5, topY, width + 10, 4);
+        // 底座
+        gc.setFill(Color.web("#3e3e50"));
+        gc.fillRect(x - 5, GROUND_Y - 12, width + 10, 12);
+    }
+
+    /** 火炬 */
+    private void drawTorch(double cx, double y) {
+        // 炬柄
+        gc.setFill(Color.web("#5a3a1a"));
+        gc.fillRect(cx - 3, y, 6, 28);
+        // 火焰底（橙色）
+        gc.setFill(Color.web("#e06000", 0.85));
+        gc.fillOval(cx - 8, y - 14, 16, 20);
+        // 火焰芯（黃色）
+        gc.setFill(Color.web("#ffe040", 0.9));
+        gc.fillOval(cx - 4, y - 10, 8, 12);
+        // 暈光
+        gc.setFill(Color.web("#ff8800", 0.12));
+        gc.fillOval(cx - 22, y - 28, 44, 50);
+    }
+
+    /** 商店建築：石造牆面 + 招牌 */
+    private void drawShopBuilding() {
+        double sx = shopCounter.getMinX();
+        double sy = shopCounter.getMinY();
+        double sw = shopCounter.getWidth();
+        double sh = shopCounter.getHeight();
+
+        // 左牆柱
+        gc.setFill(Color.web("#252530"));
+        gc.fillRect(sx - 18, sy - 80, 18, sh + 80);
+        gc.setFill(Color.web("#333340"));
+        gc.fillRect(sx - 18, sy - 80, 4, sh + 80);
+        // 右牆柱
+        gc.setFill(Color.web("#252530"));
+        gc.fillRect(sx + sw, sy - 80, 18, sh + 80);
+        gc.setFill(Color.web("#18181f"));
+        gc.fillRect(sx + sw + 14, sy - 80, 4, sh + 80);
+
+        // 頂樑
+        gc.setFill(Color.web("#2e2e3c"));
+        gc.fillRect(sx - 22, sy - 84, sw + 40, 12);
+        gc.setFill(Color.web("#3e3e50"));
+        gc.fillRect(sx - 22, sy - 84, sw + 40, 4);
+
+        // 招牌木板
+        gc.setFill(Color.web("#5a3a1a"));
+        gc.fillRoundRect(sx + 4, sy - 68, sw - 8, 32, 4, 4);
+        gc.setStroke(Color.web("#8b5a2b"));
+        gc.setLineWidth(1.5);
+        gc.strokeRoundRect(sx + 4, sy - 68, sw - 8, 32, 4, 4);
+        gc.setFill(Color.GOLD);
+        gc.setFont(javafx.scene.text.Font.font("Arial", javafx.scene.text.FontWeight.BOLD, 14));
+        gc.fillText("SHOP", sx + 36, sy - 46);
+
+        // 金幣圖示
+        gc.setFill(Color.GOLD);
+        gc.fillOval(sx + 12, sy - 64, 18, 18);
+        gc.setFill(Color.web("#b8860b"));
+        gc.setFont(javafx.scene.text.Font.font(10));
+        gc.fillText("G", sx + 17, sy - 51);
+
+        // 石造櫃台
+        gc.setFill(Color.web("#2a2a38"));
+        gc.fillRect(sx, sy, sw, sh);
+        gc.setFill(Color.web("#363648"));
+        gc.fillRect(sx, sy, sw, 5);
+        gc.setFill(Color.web("#1e1e28"));
+        gc.fillRect(sx, sy + sh - 5, sw, 5);
+        gc.setStroke(Color.web("#4a4a60"));
+        gc.setLineWidth(1);
+        gc.strokeRect(sx, sy, sw, sh);
+    }
+
+    /** 浮板：石板外形，含正面厚度與高光 */
+    private void drawFloatingPlatforms() {
+        for (Rectangle2D p : platforms) {
+            double x = p.getMinX(), y = p.getMinY();
+            double w = p.getWidth(), h = p.getHeight();
+            int face = 6; // 正面厚度
+
+            // 正面（石板前側）
+            gc.setFill(Color.web("#1e1e28"));
+            gc.fillRect(x, y + h - face, w, face);
+
+            // 主石面
+            gc.setFill(Color.web("#383848"));
+            gc.fillRect(x, y, w, h - face);
+
+            // 頂面高光
+            gc.setFill(Color.web("#4e4e62"));
+            gc.fillRect(x, y, w, 4);
+
+            // 石塊紋路（短直線）
+            gc.setStroke(Color.web("#2a2a38"));
+            gc.setLineWidth(1);
+            gc.strokeLine(x + w / 3, y + 4, x + w / 3, y + h - face - 2);
+            gc.strokeLine(x + w * 2 / 3, y + 4, x + w * 2 / 3, y + h - face - 2);
+
+            // 左右邊角陰影
+            gc.setFill(Color.web("#18181f"));
+            gc.fillRect(x, y, 3, h);
+            gc.fillRect(x + w - 3, y, 3, h);
+        }
+    }
+
     private void drawShopCounter() {
         gc.setFill(Color.web("#6d4c41"));
         gc.fillRect(shopCounter.getMinX(), shopCounter.getMinY(),
@@ -361,11 +542,72 @@ public class ShopScene extends AnimationTimer {
     }
 
     private void drawExitDoor() {
-        gc.setFill(Color.web("#263238"));
-        gc.fillRect(exitDoor.getMinX(), exitDoor.getMinY(), exitDoor.getWidth(), exitDoor.getHeight());
-        gc.setStroke(Color.PURPLE);
-        gc.setLineWidth(3);
-        gc.strokeRect(exitDoor.getMinX(), exitDoor.getMinY(), exitDoor.getWidth(), exitDoor.getHeight());
+        double x = exitDoor.getMinX();
+        double y = exitDoor.getMinY();
+        double w = exitDoor.getWidth();
+        double h = exitDoor.getHeight();
+
+        // 血紅背光暈（壓迫感）
+        gc.save();
+        gc.setGlobalAlpha(0.10 + 0.04 * Math.sin(platformTime * 1.6));
+        gc.setFill(Color.web("#cc0000"));
+        gc.fillOval(x - 32, y - 18, w + 64, h + 36);
+        gc.restore();
+
+        // 石拱兩側柱
+        gc.setFill(Color.web("#1e1e28"));
+        gc.fillRect(x - 12, y, 12, h + 2);
+        gc.fillRect(x + w, y, 12, h + 2);
+        gc.fillRoundRect(x - 14, y - 10, w + 28, 22, 6, 6);
+        // 拱頂高光
+        gc.setFill(Color.web("#333340"));
+        gc.fillRect(x - 14, y - 10, w + 28, 4);
+        // 拱柱左側亮邊
+        gc.setFill(Color.web("#2e2e3c"));
+        gc.fillRect(x - 12, y, 3, h);
+        gc.fillRect(x + w + 9, y, 3, h);
+
+        // 門洞：深黑帶微紅
+        gc.setFill(Color.web("#080005"));
+        gc.fillRect(x, y, w, h);
+
+        // 深紅裂縫
+        // 爪痕（三道斜線，替代十字）
+        double mX = x + w / 2.0;
+        double mY = y + h / 2.0;
+        gc.save();
+        gc.setGlobalAlpha(0.55);
+        gc.setStroke(Color.web("#990000"));
+        gc.setLineWidth(2.0);
+        gc.strokeLine(mX - 8, mY - 22, mX + 10, mY + 22);
+        gc.strokeLine(mX - 14, mY - 22, mX + 4,  mY + 22);
+        gc.strokeLine(mX - 2,  mY - 22, mX + 16, mY + 22);
+        gc.restore();
+
+        // 門洞內紅色暈光
+        gc.save();
+        gc.setGlobalAlpha(0.18 + 0.06 * Math.sin(platformTime * 2.1));
+        gc.setFill(Color.web("#cc1100"));
+        gc.fillOval(x - 6, y + h * 0.25, w + 12, h * 0.55);
+        gc.restore();
+
+        // 描邊（深暗紅）
+        gc.setStroke(Color.web("#550000"));
+        gc.setLineWidth(2.5);
+        gc.strokeRect(x, y, w, h);
+
+        // 鏈環裝飾
+        gc.setFill(Color.web("#3a2808"));
+        int[] chainY = {12, 32, 52};
+        for (int cy : chainY) {
+            gc.fillOval(x - 9, y + cy, 7, 7);
+            gc.fillOval(x + w + 2, y + cy, 7, 7);
+        }
+
+        // 上方 BOSS 標籤
+        gc.setFill(Color.web("#cc2020"));
+        gc.setFont(Font.font("Arial", javafx.scene.text.FontWeight.BOLD, 11));
+        gc.fillText("BOSS", x + 6, y - 14);
     }
 
     private void drawOpenPrompt() {
@@ -375,9 +617,9 @@ public class ShopScene extends AnimationTimer {
     }
 
     private void drawExitPrompt() {
-        gc.setFill(Color.WHITE);
+        gc.setFill(Color.web("#ffaaaa"));
         gc.setFont(Font.font(14));
-        gc.fillText("Press Enter", exitDoor.getMinX() - 32, exitDoor.getMinY() - 12);
+        gc.fillText("Press Enter", exitDoor.getMinX() - 32, exitDoor.getMinY() - 28);
     }
 
     private void drawShopUI() {

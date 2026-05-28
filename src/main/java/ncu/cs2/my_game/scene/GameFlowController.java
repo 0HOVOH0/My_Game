@@ -54,9 +54,12 @@ public class GameFlowController {
             return true;
         }
         if (key == KeyCode.M) {
-            exitToMenu.run();
-            event.consume();
-            return true;
+            if (paused) {
+                exitToMenu.run();
+                event.consume();
+                return true;
+            }
+            return false;   // not paused → let M pass through as potion key
         }
         if (key == KeyCode.Q) {
             if (paused) {

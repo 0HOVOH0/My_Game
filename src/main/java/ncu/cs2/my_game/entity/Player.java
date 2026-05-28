@@ -591,31 +591,108 @@ public class Player extends Entity {
         gc.restore();
     }
 
-    /**
-     * 繪製玩家主體。
-     * TODO: 動畫精靈圖待實作，目前以純色矩形代替。
-     *
-     * @param gc 畫布繪圖上下文
-     */
     private void drawBody(GraphicsContext gc) {
-        // TODO: 依 facingRight 與動作狀態切換精靈圖幀
-        gc.setFill(Color.CORNFLOWERBLUE);
-        gc.fillRect(x, y, width, height);
-
-        // 以小三角形指示面向（待精靈圖後移除）
-        gc.setFill(Color.WHITE);
-        if (getVisualFacingRight()) {
-            gc.fillPolygon(
-                new double[]{x + width - 4, x + width - 12, x + width - 12},
-                new double[]{y + height / 2.0, y + height / 2.0 - 6, y + height / 2.0 + 6},
-                3
-            );
+        boolean right = getVisualFacingRight();
+        if (height < Config.PLAYER_HEIGHT - 6) {
+            drawBodyCrouch(gc, right);
         } else {
-            gc.fillPolygon(
-                new double[]{x + 4, x + 12, x + 12},
-                new double[]{y + height / 2.0, y + height / 2.0 - 6, y + height / 2.0 + 6},
-                3
-            );
+            drawBodyStand(gc, right);
+        }
+    }
+
+    private void drawBodyStand(GraphicsContext gc, boolean right) {
+        // ── 帽子/頭髮 ──────────────────────────────────────────────
+        gc.setFill(Color.web("#3a2510"));
+        gc.fillRect(x, y, width, 5);
+        gc.fillRect(x - 1, y + 4, width + 2, 3);
+
+        // ── 臉 ─────────────────────────────────────────────────────
+        gc.setFill(Color.web("#e8b484"));
+        gc.fillRect(x + 5, y + 7, 18, 10);
+
+        // 眼睛（朝向面）
+        double eyeX = right ? x + 18 : x + 5;
+        gc.setFill(Color.WHITE);
+        gc.fillOval(eyeX, y + 8, 5, 4);
+        gc.setFill(Color.web("#1a0800"));
+        gc.fillOval(right ? eyeX + 2 : eyeX, y + 9, 3, 3);
+
+        // ── 頸部 ───────────────────────────────────────────────────
+        gc.setFill(Color.web("#e8b484"));
+        gc.fillRect(x + 10, y + 17, 8, 4);
+
+        // ── 護肩 / 外套領 ─────────────────────────────────────────
+        gc.setFill(Color.web("#1a3060"));
+        gc.fillRect(x, y + 21, width, 3);
+
+        // ── 身體 / 外套 ────────────────────────────────────────────
+        gc.setFill(Color.web("#1e3a5f"));
+        gc.fillRect(x, y + 21, width, 13);
+        gc.setFill(Color.web("#2d5a8e"));   // 中央亮色
+        gc.fillRect(x + 8, y + 22, 12, 11);
+        gc.setFill(Color.web("#162c4a"));   // 左右深邊
+        gc.fillRect(x, y + 24, 5, 9);
+        gc.fillRect(x + width - 5, y + 24, 5, 9);
+
+        // ── 皮帶 ───────────────────────────────────────────────────
+        gc.setFill(Color.web("#4a2a08"));
+        gc.fillRect(x + 1, y + 34, width - 2, 3);
+        gc.setFill(Color.web("#c8a030"));   // 腰帶扣
+        gc.fillRect(x + 11, y + 34, 6, 3);
+
+        // ── 武器（面向側） ─────────────────────────────────────────
+        if (right) {
+            gc.setFill(Color.web("#b8c0cc"));   // 劍身
+            gc.fillRect(x + width, y + 24, 10, 3);
+            gc.setFill(Color.web("#c8a030"));   // 護手
+            gc.fillRect(x + width - 2, y + 22, 2, 7);
+        } else {
+            gc.setFill(Color.web("#b8c0cc"));
+            gc.fillRect(x - 10, y + 24, 10, 3);
+            gc.setFill(Color.web("#c8a030"));
+            gc.fillRect(x, y + 22, 2, 7);
+        }
+
+        // ── 腿 ─────────────────────────────────────────────────────
+        gc.setFill(Color.web("#1a2030"));
+        gc.fillRect(x + 2,  y + 37, 10, 5);
+        gc.fillRect(x + 16, y + 37, 10, 5);
+
+        // ── 靴子 ───────────────────────────────────────────────────
+        gc.setFill(Color.web("#2a1a0a"));
+        gc.fillRect(x + 1,  y + 39, 12, 3);
+        gc.fillRect(x + 15, y + 39, 12, 3);
+    }
+
+    private void drawBodyCrouch(GraphicsContext gc, boolean right) {
+        // ── 帽子 ───────────────────────────────────────────────────
+        gc.setFill(Color.web("#3a2510"));
+        gc.fillRect(x, y, width, 4);
+        gc.fillRect(x - 1, y + 3, width + 2, 2);
+
+        // ── 臉 ─────────────────────────────────────────────────────
+        gc.setFill(Color.web("#e8b484"));
+        gc.fillRect(x + 5, y + 5, 18, 8);
+
+        // 眼睛
+        double eyeX = right ? x + 18 : x + 5;
+        gc.setFill(Color.WHITE);
+        gc.fillOval(eyeX, y + 6, 4, 3);
+        gc.setFill(Color.web("#1a0800"));
+        gc.fillOval(right ? eyeX + 1 : eyeX, y + 7, 3, 2);
+
+        // ── 身體（壓縮） ───────────────────────────────────────────
+        gc.setFill(Color.web("#1e3a5f"));
+        gc.fillRect(x + 1, y + 13, width - 2, height - 13);
+        gc.setFill(Color.web("#2d5a8e"));
+        gc.fillRect(x + 8, y + 14, 12, height - 16);
+
+        // ── 武器 ───────────────────────────────────────────────────
+        gc.setFill(Color.web("#b8c0cc"));
+        if (right) {
+            gc.fillRect(x + width, y + 15, 7, 2);
+        } else {
+            gc.fillRect(x - 7, y + 15, 7, 2);
         }
     }
 

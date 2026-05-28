@@ -106,18 +106,24 @@ public final class DungeonMapRenderer {
     private static void drawExit(GraphicsContext gc, Rectangle2D exit, double cameraX, String exitLabel) {
         double x = exit.getMinX() - cameraX;
         double y = exit.getMinY();
+        boolean toShop = "SHOP".equals(exitLabel);
+        String glowHex  = toShop ? "#ffd060" : "#63d8ff";
+        String rimHex   = toShop ? "#ffb020" : "#8af0ff";
+        String fillHex  = toShop ? "#2d2408" : "#152d38";
+        String textHex  = toShop ? "#ffdd80" : "#bff9ff";
+
         gc.save();
         gc.setGlobalAlpha(0.28);
-        gc.setFill(Color.web("#63d8ff"));
+        gc.setFill(Color.web(glowHex));
         gc.fillOval(x - 8, y - 6, exit.getWidth() + 16, exit.getHeight() + 12);
         gc.restore();
 
-        gc.setStroke(Color.web("#8af0ff"));
+        gc.setStroke(Color.web(rimHex));
         gc.setLineWidth(3);
         gc.strokeRoundRect(x, y, exit.getWidth(), exit.getHeight(), 16, 16);
-        gc.setFill(Color.web("#152d38"));
+        gc.setFill(Color.web(fillHex));
         gc.fillRoundRect(x + 6, y + 8, exit.getWidth() - 12, exit.getHeight() - 10, 12, 12);
-        gc.setFill(Color.web("#bff9ff"));
+        gc.setFill(Color.web(textHex));
         gc.fillText(exitLabel, x - 3, y - 7);
     }
 
