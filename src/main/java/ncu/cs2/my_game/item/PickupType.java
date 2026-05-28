@@ -2,7 +2,12 @@ package ncu.cs2.my_game.item;
 
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.image.Image;
+import javafx.scene.image.PixelReader;
+import javafx.scene.image.PixelWriter;
+import javafx.scene.image.WritableImage;
 import javafx.scene.paint.Color;
+
+import java.util.ArrayDeque;
 
 /**
  * 可撿取道具種類。
@@ -81,10 +86,61 @@ public enum PickupType {
         if (icon != null) return icon;
         try {
             var stream = PickupType.class.getResourceAsStream(iconPath);
-            if (stream != null) icon = new Image(stream);
+            if (stream != null) icon = removeLightEdgeFrame(new Image(stream));
         } catch (RuntimeException ignored) {
             icon = null;
         }
         return icon;
+    }
+
+    /**
+     * Older item sprites include a white tile-card around the object. Remove only
+     * pale pixels connected to the image boundary, preserving white pixels inside
+     * the potion cross, fuse highlights, or scroll art.
+     */
+    private static Image removeLightEdgeFrame(Image source) {
+        int width = (int) source.getWidth();
+        int height = (int) source.getHeight();
+        if (width <= 0 || height <= 0) return source;
+
+        PixelReader reader = source.getPixelReader();
+        WritableImage cleaned = new WritableImage(reader, width, height);
+        PixelWriter writer = cleaned.getPixelWriter();
+        boolean[][] removed = new boolean[height][width];
+        ArrayDeque<int[]> queue = new ArrayDeque<>();
+
+        for (int x = 0; x < width; x++) {
+            enqueueLightEdge(reader, removed, queue, x, 0);
+            enqueueLightEdge(reader, removed, queue, x, height - 1);
+        }
+        for (int y = 0; y < height; y++) {
+            enqueueLightEdge(reader, removed, queue, 0, y);
+            enqueueLightEdge(reader, removed, queue, width - 1, y);
+        }
+        while (!queue.isEmpty()) {
+            int[] pixel = queue.remove();
+            int x = pixel[0];
+            int y = pixel[1];
+            writer.setColor(x, y, Color.TRANSPARENT);
+            if (x > 0) enqueueLightEdge(reader, removed, queue, x - 1, y);
+            if (x + 1 < width) enqueueLightEdge(reader, removed, queue, x + 1, y);
+            if (y > 0) enqueueLightEdge(reader, removed, queue, x, y - 1);
+            if (y + 1 < height) enqueueLightEdge(reader, removed, queue, x, y + 1);
+        }
+        return cleaned;
+    }
+
+    private static void enqueueLightEdge(PixelReader reader, boolean[][] removed,
+                                         ArrayDeque<int[]> queue, int x, int y) {
+        if (removed[y][x]) return;
+        Color color = reader.getColor(x, y);
+        double spread = Math.max(color.getRed(), Math.max(color.getGreen(), color.getBlue()))
+            - Math.min(color.getRed(), Math.min(color.getGreen(), color.getBlue()));
+        boolean paleNeutral = color.getOpacity() > 0.01
+            && color.getBrightness() > 0.72 && spread < 0.16;
+        if (paleNeutral) {
+            removed[y][x] = true;
+            queue.add(new int[] { x, y });
+        }
     }
 }

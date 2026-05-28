@@ -84,8 +84,8 @@ public class Level2Scene extends AnimationTimer {
     /** 終點門高度 */
     private static final double GOAL_H = 150.0;
 
-    /** 加血道具尺寸（正方形，像素） */
-    private static final double ITEM_SIZE = 20.0;
+    /** 舊版補血生成點也沿用地板道具尺寸與圖示比例。 */
+    private static final double ITEM_SIZE = PickupItem.SIZE;
 
     /** 加血道具回復的血量 */
     private static final int ITEM_HEAL = 30;
@@ -1457,13 +1457,7 @@ public class Level2Scene extends AnimationTimer {
         }
     }
 
-    /**
-     * 繪製加血道具（綠色十字符號）。
-     * 已拾取（healthItem == null）時不繪製。
-     * TODO: 換成旋轉發光的道具精靈圖。
-     *
-     * @param gc 畫布繪圖上下文
-     */
+    /** 繪製舊版補血生成點，沿用目前小藥水圖示以保持道具風格一致。 */
     private void drawHealthItem(GraphicsContext gc) {
         if (healthItem == null) return;
         if (!isVisible(healthItem)) return;
@@ -1471,21 +1465,7 @@ public class Level2Scene extends AnimationTimer {
         double ix = healthItem.getMinX();
         double iy = healthItem.getMinY();
         double s  = ITEM_SIZE;
-
-        // 外框（白色）增加辨識度
-        gc.setFill(Color.web("#ffffff"));
-        gc.fillRect(ix - 1, iy - 1, s + 2, s + 2);
-
-        // 十字背景（深綠底）
-        gc.setFill(Color.web("#1b5e20"));
-        gc.fillRect(ix, iy, s, s);
-
-        // 十字橫槓
-        gc.setFill(Color.LIMEGREEN);
-        gc.fillRect(ix, iy + s / 2 - 3, s, 6);
-
-        // 十字直槓
-        gc.fillRect(ix + s / 2 - 3, iy, 6, s);
+        PickupType.SMALL_POTION.drawIcon(gc, ix, iy, s);
     }
 
     /**

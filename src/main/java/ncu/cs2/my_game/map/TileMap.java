@@ -111,8 +111,38 @@ public class TileMap {
             (x1 - x0 + 1) * TILE_SIZE, TILE_SIZE));
     }
 
+    /**
+     * Removes an optional platform run during generated-map cleanup.
+     * Only platform tiles are erased, so structural wall and floor geometry is never affected.
+     */
+    public boolean removePlatformRun(Rectangle2D platform) {
+        boolean removed = mainPlatforms.removeIf(existing ->
+            existing.getMinX() == platform.getMinX()
+                && existing.getMinY() == platform.getMinY()
+                && existing.getWidth() == platform.getWidth());
+        if (!removed) return false;
+
+        int tileY = (int) Math.round(platform.getMinY() / TILE_SIZE);
+        int startX = (int) Math.round(platform.getMinX() / TILE_SIZE);
+        int endX = (int) Math.round(platform.getMaxX() / TILE_SIZE) - 1;
+        for (int x = startX; x <= endX; x++) {
+            TileType type = getTile(x, tileY);
+            if (type == TileType.PLATFORM || type == TileType.ONE_WAY_PLATFORM) {
+                setTile(x, tileY, TileType.EMPTY);
+            }
+        }
+        return true;
+    }
+
     public void addMainPlatform(Rectangle2D platform) {
         mainPlatforms.add(platform);
+    }
+
+    public boolean removeMainPlatform(Rectangle2D platform) {
+        return mainPlatforms.removeIf(existing ->
+            existing.getMinX() == platform.getMinX()
+                && existing.getMinY() == platform.getMinY()
+                && existing.getWidth() == platform.getWidth());
     }
 
     public List<Rectangle2D> getMainPlatforms() {

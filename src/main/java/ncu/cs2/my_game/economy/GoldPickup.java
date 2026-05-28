@@ -11,7 +11,7 @@ import ncu.cs2.my_game.Config;
  */
 public class GoldPickup {
 
-    public static final double SIZE = 18.0;
+    public static final double SIZE = 22.0;
 
     private static Image icon;
 

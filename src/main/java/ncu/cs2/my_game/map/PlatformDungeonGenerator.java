@@ -24,10 +24,13 @@ public class PlatformDungeonGenerator {
     private static final int MAX_ATTEMPTS = 60;
     private static final double SAFE_JUMP_SPEED_FACTOR = 0.70;
     private static final double SAFE_JUMP_HEIGHT_FACTOR = 0.70;
+    private static final double RECOVERY_JUMP_HEIGHT_FACTOR = 0.80;
     private static final double SAFE_DROP_HEIGHT_FACTOR = 1.20;
     private static final double JUMP_EDGE_MARGIN = 10.0;
     private static final int MIN_WALL_GAP_TILES = 3;
     private static final double WALL_CONNECTION_CHANCE = 0.24;
+
+    private record OptionalPlatform(Rectangle2D bounds, TileType type) { }
 
     private final Random random;
     private final long seed;
@@ -119,12 +122,14 @@ public class PlatformDungeonGenerator {
         map.setTile((int) (exitX / TileMap.TILE_SIZE), (int) (exitY / TileMap.TILE_SIZE), TileType.EXIT);
 
         // Phase 3: optional exploration paths and relay platforms only after the main path.
-        addUpperRoute(map, route, levelIndex);
-        addConnectorPlatforms(map, route, levelIndex);
-        addBranches(map, route, levelIndex, config);
+        List<OptionalPlatform> optionalPlatforms = new ArrayList<>();
+        addUpperRoute(map, route, levelIndex, stats);
+        optionalPlatforms.addAll(addConnectorPlatforms(map, route, levelIndex, stats));
+        addBranches(map, route, levelIndex, config, stats, optionalPlatforms);
         addRouteArchitecture(map, route, levelIndex);
         addUpperFloatingWalls(map, route, levelIndex);
         addFloorPocketRecoveryPlatforms(map, route, stats);
+        pruneRedundantOptionalPlatforms(map, route, optionalPlatforms, stats);
 
         // Phase 4: dynamic content is allowed only once terrain is genuinely traversable.
         PlatformValidationResult terrainValidation = validatePlatformMap(map, stats);
@@ -142,7 +147,8 @@ public class PlatformDungeonGenerator {
      * higher than the previous, keeping vertical gaps within the player's jump limit.
      * These platforms give the exit a high position and create an explorable upper layer.
      */
-    private void addUpperRoute(TileMap map, List<Rectangle2D> route, int levelIndex) {
+    private void addUpperRoute(TileMap map, List<Rectangle2D> route, int levelIndex,
+                               PlayerStats stats) {
         // Start from the highest existing platform in the right 60% of the map.
         int mapRightStartTile = (int) (map.getWidthTiles() * 0.60);
         Rectangle2D base = null;
@@ -169,6 +175,11 @@ public class PlatformDungeonGenerator {
             int pLength = 3 + random.nextInt(4);
             if (startX + pLength >= map.getWidthTiles() - 2) continue;
             if (!canPlaceConnector(map, startX, newY, pLength)) continue;
+            Rectangle2D candidate = platformBounds(startX, newY, pLength);
+            if (!canJumpBetween(map, current, candidate, stats)
+                    || !canJumpBetween(map, candidate, current, stats)) {
+                continue;
+            }
 
             TileType type = random.nextDouble() < 0.5 ? TileType.ONE_WAY_PLATFORM : TileType.PLATFORM;
             Rectangle2D newPlat = addRun(map, startX, newY, pLength, type);
@@ -725,7 +736,7 @@ public class PlatformDungeonGenerator {
             Rectangle2D floorSurface = previous == null
                 ? centeredFloorPocketSurface(map, start, end)
                 : floorLaunchSurfaceForPlatform(map, start, end, previous);
-            if (previous != null && !canJumpBetween(map, floorSurface, previous, stats)) {
+            if (previous != null && !canRecoveryJumpBetween(map, floorSurface, previous, stats)) {
                 previous = null;
                 floorSurface = centeredFloorPocketSurface(map, start, end);
             }
@@ -736,7 +747,7 @@ public class PlatformDungeonGenerator {
                     + previous.getWidth() / TileMap.TILE_SIZE / 2.0;
             int stepY = previous == null ? escapeY
                 : (int) (previous.getMinY() / TileMap.TILE_SIZE) - 2;
-            for (int step = 0; step < 8; step++, stepY -= 2) {
+            for (int step = 0; step < 8; step++, stepY -= 3) {
                 if (stepY <= 2 || (previous != null
                         && canReturnToGoalRoute(map, previous, wallTopTargets, safeReturnRoute, stats))) {
                     break;
@@ -793,7 +804,7 @@ public class PlatformDungeonGenerator {
             int candidateX = clamp(baseX + offset, pocketStart, maxX);
             Rectangle2D candidate = platformBounds(candidateX, tileY, length);
             if (canPlaceConnector(map, candidateX, tileY, length)
-                    && (previousStep == null || canJumpBetween(map, previousStep, candidate, stats))) {
+                    && (previousStep == null || canRecoveryJumpBetween(map, previousStep, candidate, stats))) {
                 Rectangle2D step = addRun(map, candidateX, tileY, length, TileType.ONE_WAY_PLATFORM);
                 route.add(step);
                 return step;
@@ -818,8 +829,19 @@ public class PlatformDungeonGenerator {
     private boolean canReturnToGoalRoute(TileMap map, Rectangle2D step,
                                          List<Rectangle2D> wallTops,
                                          List<Rectangle2D> safeRoute, PlayerStats stats) {
-        return canConnectToRoute(map, step, wallTops, stats)
-            || canConnectToRoute(map, step, safeRoute, stats);
+        return canRecoveryConnectToRoute(map, step, wallTops, stats)
+            || canRecoveryConnectToRoute(map, step, safeRoute, stats);
+    }
+
+    private boolean canRecoveryConnectToRoute(TileMap map, Rectangle2D step,
+                                              List<Rectangle2D> route, PlayerStats stats) {
+        for (Rectangle2D platform : route) {
+            if (platform == step || platform.equals(step)
+                    || canRecoveryJumpBetween(map, step, platform, stats)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Rectangle2D centeredFloorPocketSurface(TileMap map, int startX, int endX) {
@@ -1064,7 +1086,9 @@ public class PlatformDungeonGenerator {
         }
     }
 
-    private void addConnectorPlatforms(TileMap map, List<Rectangle2D> route, int levelIndex) {
+    private List<OptionalPlatform> addConnectorPlatforms(TileMap map, List<Rectangle2D> route,
+                                                          int levelIndex, PlayerStats stats) {
+        List<OptionalPlatform> optionalPlatforms = new ArrayList<>();
         int extra = Math.min(3, 1 + levelIndex / 2);
         for (int i = 0; i < route.size() - 1 && extra > 0; i++) {
             Rectangle2D from = route.get(i);
@@ -1081,11 +1105,19 @@ public class PlatformDungeonGenerator {
                 midY = clamp(fromY + (toY >= fromY ? 2 : -2), 4, 16);
             }
             if (startX <= 2 || startX + length >= map.getWidthTiles() - 2) continue;
-            if (canPlaceConnector(map, startX, midY, length)) {
-                addRun(map, startX, midY, length, TileType.ONE_WAY_PLATFORM);
+            Rectangle2D connector = platformBounds(startX, midY, length);
+            boolean linksRoute = canJumpBetween(map, from, connector, stats)
+                && canJumpBetween(map, connector, to, stats);
+            boolean returnsFromDetour = canJumpBetween(map, to, connector, stats)
+                && canJumpBetween(map, connector, from, stats);
+            if (canPlaceConnector(map, startX, midY, length)
+                    && (linksRoute || returnsFromDetour)) {
+                Rectangle2D platform = addRun(map, startX, midY, length, TileType.ONE_WAY_PLATFORM);
+                optionalPlatforms.add(new OptionalPlatform(platform, TileType.ONE_WAY_PLATFORM));
                 extra--;
             }
         }
+        return optionalPlatforms;
     }
 
     private boolean canPlaceConnector(TileMap map, int startX, int tileY, int length) {
@@ -1189,11 +1221,13 @@ public class PlatformDungeonGenerator {
     }
 
     private void addBranches(TileMap map, List<Rectangle2D> route, int levelIndex,
-                             PlatformGenerationConfig config) {
+                             PlatformGenerationConfig config, PlayerStats stats,
+                             List<OptionalPlatform> optionalPlatforms) {
         if (route.size() < 3) return;
-        int branchCount = levelIndex == 1 ? 5 : 7;
-        for (int i = 0; i < branchCount; i++) {
-            if (random.nextDouble() > config.branchChance()) continue;
+        int targetBranches = levelIndex == 1 ? 7 : 11;
+        int placed = 0;
+        for (int attempt = 0; attempt < targetBranches * 5 && placed < targetBranches; attempt++) {
+            if (random.nextDouble() > Math.min(0.94, config.branchChance() + 0.18)) continue;
             Rectangle2D base = route.get(1 + random.nextInt(Math.max(1, route.size() - 2)));
             int direction = random.nextBoolean() ? 1 : -1;
             int length = config.minPlatformWidth()
@@ -1205,14 +1239,25 @@ public class PlatformDungeonGenerator {
             int tileY = clamp((int) (base.getMinY() / TileMap.TILE_SIZE) + random.nextInt(5) - 2, 4, 16);
             if (startX < 2 || startX + length >= map.getWidthTiles() - 2) continue;
             if (!canPlaceConnector(map, startX, tileY, length)) continue;
+            Rectangle2D candidate = platformBounds(startX, tileY, length);
+            if (!canJumpBetween(map, base, candidate, stats)
+                    || !canJumpBetween(map, candidate, base, stats)) {
+                continue;
+            }
 
             TileType type = random.nextDouble() < config.oneWayPlatformChance()
                 ? TileType.ONE_WAY_PLATFORM : TileType.PLATFORM;
             Rectangle2D branch = addRun(map, startX, tileY, length, type);
+            placed++;
             Rectangle2D reward = new Rectangle2D(branch.getMinX() + branch.getWidth() / 2.0 - 12,
                 branch.getMinY() - 28, 24, 24);
+            boolean hasReward = false;
             if (new PlacementValidator(map).isValidRewardPlacement(reward)) {
                 map.addRewardZone(reward);
+                hasReward = true;
+            }
+            if (!hasReward) {
+                optionalPlatforms.add(new OptionalPlatform(branch, type));
             }
 
             if (random.nextDouble() < 0.45) {
@@ -1223,6 +1268,249 @@ public class PlatformDungeonGenerator {
                     map.setTile(ladderX, y, TileType.LADDER);
                 }
             }
+        }
+    }
+
+    /**
+     * Removes empty platforms which do not contribute to a route toward the exit or rewards.
+     * Each removal is still validated against reachability and pit-recovery rules before it sticks.
+     */
+    private void pruneRedundantOptionalPlatforms(TileMap map, List<Rectangle2D> route,
+                                                 List<OptionalPlatform> earlyCandidates,
+                                                 PlayerStats stats) {
+        int floorEscapeY = map.getHeightTiles() - 3;
+        boolean changed;
+        do {
+            changed = false;
+            List<OptionalPlatform> candidates = collectRedundantPlatformCandidates(map, stats);
+            for (OptionalPlatform early : earlyCandidates) {
+                if (containsPlatform(map.getMainPlatforms(), early.bounds())
+                        && candidates.stream().noneMatch(candidate ->
+                            samePlatform(candidate.bounds(), early.bounds()))) {
+                    candidates.add(early);
+                }
+            }
+            for (Rectangle2D platform : map.getMainPlatforms()) {
+                if (isPhysicalPlatform(map, platform)
+                        && !isRequiredPlatform(map, platform)
+                        && candidates.stream().noneMatch(candidate ->
+                            samePlatform(candidate.bounds(), platform))) {
+                    candidates.add(new OptionalPlatform(platform, platformTileType(map, platform)));
+                }
+            }
+            candidates.sort((a, b) -> Double.compare(a.bounds().getMinY(), b.bounds().getMinY()));
+
+            for (OptionalPlatform candidate : candidates) {
+                if (isRequiredPlatform(map, candidate.bounds())) continue;
+                List<OptionalPlatform> removed = new ArrayList<>();
+                if (!removeOptionalPlatform(map, candidate, removed)) continue;
+                cascadeRedundantOptionalPlatforms(map, stats, removed);
+
+                PlatformValidationResult result = validatePlatformMap(map, stats);
+                boolean stillPlayable = result.valid()
+                    && hasEscapableFloorPockets(map, floorEscapeY, stats);
+                Rectangle2D wallTopReplacement = null;
+                if (!stillPlayable) {
+                    wallTopReplacement = findWallTopReplacement(map, candidate.bounds());
+                    if (wallTopReplacement != null) {
+                        map.addMainPlatform(wallTopReplacement);
+                        result = validatePlatformMap(map, stats);
+                        stillPlayable = result.valid()
+                            && hasEscapableFloorPockets(map, floorEscapeY, stats);
+                    }
+                }
+                if (stillPlayable) {
+                    for (OptionalPlatform removedPlatform : removed) {
+                        removePlatformReference(route, removedPlatform.bounds());
+                    }
+                    changed = true;
+                } else {
+                    if (wallTopReplacement != null) {
+                        map.removeMainPlatform(wallTopReplacement);
+                    }
+                    restoreOptionalPlatforms(map, removed);
+                }
+            }
+        } while (changed);
+    }
+
+    private boolean removeOptionalPlatform(TileMap map, OptionalPlatform candidate,
+                                           List<OptionalPlatform> removed) {
+        if (!map.removePlatformRun(candidate.bounds())) return false;
+        removed.add(candidate);
+        return true;
+    }
+
+    private void cascadeRedundantOptionalPlatforms(TileMap map, PlayerStats stats,
+                                                   List<OptionalPlatform> removed) {
+        boolean changed;
+        do {
+            changed = false;
+            List<OptionalPlatform> cascade = collectRedundantPlatformCandidates(map, stats);
+            for (OptionalPlatform candidate : cascade) {
+                if (isRequiredPlatform(map, candidate.bounds())) continue;
+                if (removeOptionalPlatform(map, candidate, removed)) {
+                    changed = true;
+                }
+            }
+        } while (changed);
+    }
+
+    private List<OptionalPlatform> collectRedundantPlatformCandidates(TileMap map, PlayerStats stats) {
+        List<Rectangle2D> platforms = new ArrayList<>(map.getMainPlatforms());
+        Set<Integer> useful = collectUsefulPlatformIndexes(map, platforms, stats);
+        List<OptionalPlatform> candidates = new ArrayList<>();
+        for (int index = 0; index < platforms.size(); index++) {
+            Rectangle2D platform = platforms.get(index);
+            if (!isPhysicalPlatform(map, platform)
+                    || useful.contains(index)
+                    || isRequiredPlatform(map, platform)) continue;
+            candidates.add(new OptionalPlatform(platform, platformTileType(map, platform)));
+        }
+        return candidates;
+    }
+
+    private Set<Integer> collectUsefulPlatformIndexes(TileMap map, List<Rectangle2D> platforms,
+                                                      PlayerStats stats) {
+        Set<Integer> useful = new HashSet<>();
+        Rectangle2D exit = map.getExitBounds();
+        int start = platformContainingX(platforms, map.getSpawnX());
+        if (start < 0 || exit == null) return useful;
+
+        Set<Integer> targets = new HashSet<>();
+        int goal = platformContainingX(platforms, exit.getMinX());
+        if (goal >= 0) targets.add(goal);
+        for (Rectangle2D reward : map.getRewardZones()) {
+            int rewardIndex = platformContainingX(platforms, reward.getMinX() + reward.getWidth() / 2.0);
+            if (rewardIndex >= 0) targets.add(rewardIndex);
+        }
+        if (targets.isEmpty()) return useful;
+
+        boolean[] fromStart = new boolean[platforms.size()];
+        Queue<Integer> queue = new ArrayDeque<>();
+        fromStart[start] = true;
+        queue.add(start);
+        while (!queue.isEmpty()) {
+            int current = queue.remove();
+            for (int next = 0; next < platforms.size(); next++) {
+                if (fromStart[next] || next == current) continue;
+                if (canJumpBetween(map, platforms.get(current), platforms.get(next), stats)) {
+                    fromStart[next] = true;
+                    queue.add(next);
+                }
+            }
+        }
+
+        boolean[] reachesTarget = new boolean[platforms.size()];
+        queue.clear();
+        for (int target : targets) {
+            reachesTarget[target] = true;
+            queue.add(target);
+        }
+        while (!queue.isEmpty()) {
+            int current = queue.remove();
+            for (int previous = 0; previous < platforms.size(); previous++) {
+                if (reachesTarget[previous] || previous == current) continue;
+                if (canJumpBetween(map, platforms.get(previous), platforms.get(current), stats)) {
+                    reachesTarget[previous] = true;
+                    queue.add(previous);
+                }
+            }
+        }
+
+        for (int i = 0; i < platforms.size(); i++) {
+            if (fromStart[i] && reachesTarget[i]) {
+                useful.add(i);
+            }
+        }
+        return useful;
+    }
+
+    private boolean isRequiredPlatform(TileMap map, Rectangle2D platform) {
+        Rectangle2D exit = map.getExitBounds();
+        if (platformContainsX(platform, map.getSpawnX())) return true;
+        if (exit != null && platformContainsX(platform, exit.getMinX())) return true;
+        for (Rectangle2D reward : map.getRewardZones()) {
+            if (platformContainsX(platform, reward.getMinX() + reward.getWidth() / 2.0)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private TileType platformTileType(TileMap map, Rectangle2D platform) {
+        int tileX = (int) Math.round(platform.getMinX() / TileMap.TILE_SIZE);
+        int tileY = (int) Math.round(platform.getMinY() / TileMap.TILE_SIZE);
+        TileType type = map.getTile(tileX, tileY);
+        return type == TileType.PLATFORM ? TileType.PLATFORM : TileType.ONE_WAY_PLATFORM;
+    }
+
+    private boolean isPhysicalPlatform(TileMap map, Rectangle2D platform) {
+        int tileX = (int) Math.round(platform.getMinX() / TileMap.TILE_SIZE);
+        int tileY = (int) Math.round(platform.getMinY() / TileMap.TILE_SIZE);
+        TileType type = map.getTile(tileX, tileY);
+        return type == TileType.PLATFORM || type == TileType.ONE_WAY_PLATFORM;
+    }
+
+    private boolean containsPlatform(List<Rectangle2D> platforms, Rectangle2D target) {
+        for (Rectangle2D platform : platforms) {
+            if (samePlatform(platform, target)) return true;
+        }
+        return false;
+    }
+
+    private void removePlatformReference(List<Rectangle2D> platforms, Rectangle2D target) {
+        platforms.removeIf(platform -> samePlatform(platform, target));
+    }
+
+    private boolean samePlatform(Rectangle2D a, Rectangle2D b) {
+        return a.getMinX() == b.getMinX()
+            && a.getMinY() == b.getMinY()
+            && a.getWidth() == b.getWidth();
+    }
+
+    private boolean platformContainsX(Rectangle2D platform, double x) {
+        return x >= platform.getMinX() - JUMP_EDGE_MARGIN
+            && x <= platform.getMaxX() + JUMP_EDGE_MARGIN;
+    }
+
+    private Rectangle2D findWallTopReplacement(TileMap map, Rectangle2D removedPlatform) {
+        int platformY = (int) Math.round(removedPlatform.getMinY() / TileMap.TILE_SIZE);
+        int left = Math.max(1, (int) Math.round(removedPlatform.getMinX() / TileMap.TILE_SIZE) - 1);
+        int right = Math.min(map.getWidthTiles() - 2,
+            (int) Math.round(removedPlatform.getMaxX() / TileMap.TILE_SIZE));
+
+        Rectangle2D best = null;
+        for (int y = platformY; y <= Math.min(map.getHeightTiles() - 2, platformY + 3); y++) {
+            int x = left;
+            while (x <= right) {
+                while (x <= right && !isClearWallTopTile(map, x, y)) x++;
+                int start = x;
+                while (x <= right && isClearWallTopTile(map, x, y)) x++;
+                int length = x - start;
+                if (length >= 2) {
+                    Rectangle2D wallTop = platformBounds(start, y, length);
+                    if (best == null || wallTop.getWidth() > best.getWidth()) {
+                        best = wallTop;
+                    }
+                }
+            }
+            if (best != null) return best;
+        }
+        return null;
+    }
+
+    private void restoreOptionalPlatform(TileMap map, OptionalPlatform candidate) {
+        Rectangle2D bounds = candidate.bounds();
+        int startX = (int) Math.round(bounds.getMinX() / TileMap.TILE_SIZE);
+        int tileY = (int) Math.round(bounds.getMinY() / TileMap.TILE_SIZE);
+        int length = (int) Math.round(bounds.getWidth() / TileMap.TILE_SIZE);
+        map.addPlatformRun(startX, tileY, length, candidate.type());
+    }
+
+    private void restoreOptionalPlatforms(TileMap map, List<OptionalPlatform> removed) {
+        for (int i = removed.size() - 1; i >= 0; i--) {
+            restoreOptionalPlatform(map, removed.get(i));
         }
     }
 
@@ -1362,12 +1650,12 @@ public class PlatformDungeonGenerator {
                 unreachable.add(platforms.get(i));
             }
         }
-        boolean enoughPlatformsUseful = reachable >= Math.ceil(platforms.size() * 0.70);
+        boolean enoughPlatformsUseful = reachable == platforms.size();
         boolean rewardsReachable = areRewardsReachable(map, platforms, visited);
         boolean valid = spawnToExitReachable && enoughPlatformsUseful && rewardsReachable;
         String reason = valid ? "ok"
             : !spawnToExitReachable ? "spawn cannot reach exit"
-            : !enoughPlatformsUseful ? "less than 70% of platforms are reachable"
+            : !enoughPlatformsUseful ? "contains unreachable optional platform"
             : "reward platform unreachable";
         return new PlatformValidationResult(valid, spawnToExitReachable, platforms.size(), reachable,
             unreachable.size(), depth[goal], map.getRewardZones().size(), seed, reason,
@@ -1506,7 +1794,7 @@ public class PlatformDungeonGenerator {
             int right = (int) (platform.getMaxX() / TileMap.TILE_SIZE) - 1;
             if (tileY < minimumTileY || right < start || left > end) continue;
             Rectangle2D floorSurface = floorLaunchSurfaceForPlatform(map, start, end, platform);
-            if (canJumpBetween(map, floorSurface, platform, stats)) {
+            if (canRecoveryJumpBetween(map, floorSurface, platform, stats)) {
                 visited[index] = true;
                 queue.add(index);
             }
@@ -1518,7 +1806,7 @@ public class PlatformDungeonGenerator {
                 return true;
             }
             for (int next = 0; next < platforms.size(); next++) {
-                if (!visited[next] && canJumpBetween(map, platform, platforms.get(next), stats)) {
+                if (!visited[next] && canRecoveryJumpBetween(map, platform, platforms.get(next), stats)) {
                     visited[next] = true;
                     queue.add(next);
                 }
@@ -1539,6 +1827,16 @@ public class PlatformDungeonGenerator {
     }
 
     private boolean canJumpBetween(TileMap map, Rectangle2D from, Rectangle2D to, PlayerStats stats) {
+        return canJumpBetween(map, from, to, stats, SAFE_JUMP_HEIGHT_FACTOR);
+    }
+
+    private boolean canRecoveryJumpBetween(TileMap map, Rectangle2D from, Rectangle2D to,
+                                           PlayerStats stats) {
+        return canJumpBetween(map, from, to, stats, RECOVERY_JUMP_HEIGHT_FACTOR);
+    }
+
+    private boolean canJumpBetween(TileMap map, Rectangle2D from, Rectangle2D to, PlayerStats stats,
+                                   double heightFactor) {
         double gap;
         if (to.getMinX() > from.getMaxX()) {
             gap = to.getMinX() - from.getMaxX();
@@ -1550,7 +1848,7 @@ public class PlatformDungeonGenerator {
 
         double verticalUp = from.getMinY() - to.getMinY();
         double verticalDrop = to.getMinY() - from.getMinY();
-        if (verticalUp > stats.maxVerticalJumpHeight() * SAFE_JUMP_HEIGHT_FACTOR
+        if (verticalUp > stats.maxVerticalJumpHeight() * heightFactor
                 || verticalDrop > stats.maxVerticalJumpHeight() * SAFE_DROP_HEIGHT_FACTOR) {
             return false;
         }

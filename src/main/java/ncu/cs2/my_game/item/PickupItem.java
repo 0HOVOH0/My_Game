@@ -11,7 +11,7 @@ import ncu.cs2.my_game.Config;
  */
 public abstract class PickupItem {
 
-    public static final double SIZE = 22.0;
+    public static final double SIZE = 28.0;
 
     private double x;
     private double y;
@@ -49,8 +49,6 @@ public abstract class PickupItem {
         if (pickedUp) return;
 
         gc.save();
-        gc.setFill(Color.WHITE);
-        gc.fillRect(x - 1, y - 1, SIZE + 2, SIZE + 2);
         type.drawIcon(gc, x, y, SIZE);
         if (quantity > 1) {
             gc.setFill(Color.web("#111111", 0.78));
