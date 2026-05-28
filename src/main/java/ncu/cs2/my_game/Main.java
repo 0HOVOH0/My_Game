@@ -18,8 +18,12 @@ import ncu.cs2.my_game.map.TileMap;
 import ncu.cs2.my_game.stage.StageDefinition;
 import ncu.cs2.my_game.stage.StageGenerator;
 import ncu.cs2.my_game.item.Inventory;
+import ncu.cs2.my_game.item.PotionInventory;
 import ncu.cs2.my_game.economy.CurrencyManager;
 import ncu.cs2.my_game.entity.BossType;
+import ncu.cs2.my_game.entity.Player;
+import ncu.cs2.my_game.progress.PlayerProgress;
+import ncu.cs2.my_game.progress.TalentOption;
 
 import java.io.IOException;
 
@@ -52,8 +56,14 @@ public class Main extends Application {
     /** 跨 Level2 與 Boss 關保留的簡易背包 */
     private static Inventory inventory = new Inventory();
 
+    /** Dedicated potion slots, separate from the three combat-item slots. */
+    private static PotionInventory potionInventory = new PotionInventory();
+
     /** 跨關卡保留的金幣。 */
     private static CurrencyManager currencyManager = new CurrencyManager();
+
+    /** 跨關卡保留的經驗、等級與天賦成長。 */
+    private static PlayerProgress playerProgress = new PlayerProgress();
 
     /** 隨機關卡生成器。 */
     private static StageGenerator stageGenerator = new StageGenerator();
@@ -64,7 +74,7 @@ public class Main extends Application {
     /** 目前進度關卡編號。 */
     private static int stageNumber = 1;
 
-    /** 每輪 Boss 前需要完成的一般關卡數。Level1 會計入第一輪第一關。 */
+    /** 每章 Boss 前需要完成的一般關卡數；教學 Level1 不計入章節。 */
     private static final int NORMAL_STAGES_BEFORE_SHOP = 3;
 
     /** 本輪已完成的一般關卡數。 */
@@ -136,12 +146,14 @@ public class Main extends Application {
         persistedHp     = Config.PLAYER_MAX_HP;
         persistedMana   = Config.PLAYER_MAX_MANA;
         inventory       = new Inventory();
+        potionInventory = new PotionInventory();
         currencyManager = new CurrencyManager();
+        playerProgress  = new PlayerProgress();
         stageGenerator  = new StageGenerator();
         mapPoolManager  = new MapPoolManager();
         mapPoolManager.generateNormalMapPool();
         stageNumber     = 1;
-        normalStagesInCycle = 1;
+        normalStagesInCycle = 0;
         lastBossType = null;
         activeBossType = null;
         nextStageDefinition = stageGenerator.nextStage();
@@ -164,6 +176,16 @@ public class Main extends Application {
     public static void startShop() {
         stopActiveSceneIfAny();
         new ShopScene(primaryStage);
+    }
+
+    /**
+     * 商店是每章第 4 關；進 Boss 前推進到第 5 關。
+     */
+    public static void startBossFromShop() {
+        if (getChapterStageIndex() == 4) {
+            stageNumber++;
+        }
+        startBoss();
     }
 
     /**
@@ -229,7 +251,7 @@ public class Main extends Application {
      * @param hp 要持久化的血量（自動限制在 [1, PLAYER_MAX_HP]）
      */
     public static void setPersistedHp(int hp) {
-        persistedHp = Math.max(1, Math.min(hp, Config.PLAYER_MAX_HP));
+        persistedHp = Math.max(1, Math.min(hp, getPlayerMaxHp()));
     }
 
     /** 儲存玩家目前血量與魔力，供下一個場景讀取。 */
@@ -241,6 +263,11 @@ public class Main extends Application {
     /** 回傳跨關卡背包 */
     public static Inventory getInventory() {
         return inventory;
+    }
+
+    /** Return the two slots reserved for healing and future potion types. */
+    public static PotionInventory getPotionInventory() {
+        return potionInventory;
     }
 
     public static int getGold() {
@@ -263,8 +290,78 @@ public class Main extends Application {
         return stageNumber;
     }
 
+    public static PlayerProgress getPlayerProgress() {
+        return playerProgress;
+    }
+
+    public static boolean addExperience(int amount) {
+        return playerProgress.addExp(amount);
+    }
+
+    public static boolean hasPendingTalentChoice() {
+        return playerProgress.hasPendingTalentChoice();
+    }
+
+    public static java.util.List<TalentOption> getPendingTalentChoices() {
+        return playerProgress.getPendingChoices();
+    }
+
+    public static TalentOption chooseTalent(int index) {
+        return playerProgress.chooseTalent(index);
+    }
+
+    public static int getPlayerMaxHp() {
+        return Config.PLAYER_MAX_HP + playerProgress.getMaxHpBonus();
+    }
+
+    public static int getPlayerMeleeDamage() {
+        return Math.max(1, (int) Math.round(
+            (Player.ATTACK_DAMAGE + playerProgress.getMeleeDamageFlatBonus())
+                * playerProgress.getMeleeDamageMultiplier()));
+    }
+
+    public static double getPlayerManaRegenMultiplier() {
+        return playerProgress.getManaRegenMultiplier();
+    }
+
+    public static double getPlayerFireballCooldownMultiplier() {
+        return playerProgress.getFireballCooldownMultiplier();
+    }
+
+    public static double getPlayerSpeedMultiplier() {
+        return playerProgress.getSpeedMultiplier();
+    }
+
+    public static double getPlayerJumpMultiplier() {
+        return playerProgress.getJumpMultiplier();
+    }
+
+    public static double getPlayerDamageTakenMultiplier() {
+        return Math.max(0.55, 1.0 - playerProgress.getDamageReduction());
+    }
+
+    public static void applyPlayerProgress(Player player) {
+        player.setMaxHp(getPlayerMaxHp());
+    }
+
+    public static int getChapterNumber() {
+        return Math.max(1, (stageNumber - 1) / 5 + 1);
+    }
+
+    public static int getChapterStageIndex() {
+        return Math.max(1, (stageNumber - 1) % 5 + 1);
+    }
+
+    public static String getStageLabel() {
+        return getChapterNumber() + "-" + getChapterStageIndex();
+    }
+
     public static StageDefinition getCurrentStageDefinition() {
         return nextStageDefinition;
+    }
+
+    public static String peekNextSceneLabel() {
+        return (normalStagesInCycle + 1 >= NORMAL_STAGES_BEFORE_SHOP) ? "SHOP" : "NEXT";
     }
 
     public static TileMap pickNormalStageMap() {

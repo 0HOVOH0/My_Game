@@ -25,6 +25,10 @@ public abstract class Entity {
     /** 垂直速度（像素 / 秒），正值向下 */
     protected double velocityY;
 
+    /** 目前 update 前的位置，供 swept solid collision 防止高速穿牆。 */
+    protected double previousX;
+    protected double previousY;
+
     // ── 尺寸 ─────────────────────────────────────────────────────────────────
 
     /** 碰撞框寬度（像素） */
@@ -61,6 +65,8 @@ public abstract class Entity {
         this.hp      = maxHp;
         this.velocityX = 0;
         this.velocityY = 0;
+        this.previousX = x;
+        this.previousY = y;
     }
 
     // ── 抽象方法（子類別必須實作） ────────────────────────────────────────────
@@ -113,6 +119,10 @@ public abstract class Entity {
     /** 回傳垂直速度 */
     public double getVelocityY() { return velocityY; }
 
+    public double getPreviousX() { return previousX; }
+
+    public double getPreviousY() { return previousY; }
+
     /** 回傳碰撞框寬度 */
     public double getWidth() { return width; }
 
@@ -138,6 +148,12 @@ public abstract class Entity {
 
     /** 設定垂直速度 */
     public void setVelocityY(double velocityY) { this.velocityY = velocityY; }
+
+    /** Call once before applying velocity for the current frame. */
+    protected void capturePreviousPosition() {
+        previousX = x;
+        previousY = y;
+    }
 
     /**
      * 設定血量，自動限制在 [0, maxHp] 範圍內。

@@ -1,44 +1,34 @@
 package ncu.cs2.my_game.item;
 
-import ncu.cs2.my_game.Config;
-
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 簡單背包：保存固定數量 slot，每格一種道具，同類型可堆疊。
+ * Two dedicated stackable slots for potion consumables.
  */
-public class Inventory {
+public class PotionInventory {
+
+    public static final int CAPACITY = 2;
 
     private final List<InventorySlot> slots;
 
-    public Inventory() {
-        this(Config.INVENTORY_SIZE);
-    }
-
-    public Inventory(int capacity) {
+    public PotionInventory() {
         slots = new ArrayList<>();
-        for (int i = 0; i < capacity; i++) {
+        for (int i = 0; i < CAPACITY; i++) {
             slots.add(new InventorySlot());
         }
     }
 
-    public boolean add(PickupType type) {
-        return add(type, 1);
-    }
-
     public boolean add(PickupType type, int amount) {
-        if (type == null || type.isPotion() || amount <= 0) return false;
+        if (type == null || !type.isPotion() || amount <= 0) return false;
 
         InventorySlot existing = findSlot(type);
         if (existing != null) {
             existing.add(amount);
             return true;
         }
-
         InventorySlot empty = findEmptySlot();
         if (empty == null) return false;
-
         empty.set(type, amount);
         return true;
     }
@@ -46,29 +36,22 @@ public class Inventory {
     public boolean useSlot(int slotIndex, UseContext context) {
         InventorySlot slot = getSlot(slotIndex);
         if (slot == null || slot.isEmpty()) return false;
-
-        slot.getType().create(0, 0).use(context);
+        PickupItem item = slot.getType().create(0, 0);
+        if (!item.canUse(context)) return false;
+        item.use(context);
         slot.decrement();
         return true;
     }
 
     public InventorySlot replaceSlot(int slotIndex, PickupType newType, int newCount) {
         InventorySlot slot = getSlot(slotIndex);
-        if (slot == null || slot.isEmpty() || newType == null || newCount <= 0) return null;
-
+        if (slot == null || slot.isEmpty() || newType == null
+                || !newType.isPotion() || newCount <= 0) {
+            return null;
+        }
         InventorySlot dropped = slot.copy();
         slot.set(newType, newCount);
         return dropped;
-    }
-
-    public int getCount(PickupType type) {
-        int total = 0;
-        for (InventorySlot slot : slots) {
-            if (!slot.isEmpty() && slot.getType() == type) {
-                total += slot.getCount();
-            }
-        }
-        return total;
     }
 
     public boolean contains(PickupType type) {
@@ -76,7 +59,8 @@ public class Inventory {
     }
 
     public boolean canAccept(PickupType type) {
-        return contains(type) || findEmptySlot() != null;
+        return type != null && type.isPotion()
+            && (contains(type) || findEmptySlot() != null);
     }
 
     public boolean isFull() {
@@ -92,19 +76,6 @@ public class Inventory {
         return slots.get(index);
     }
 
-    public PickupType getSlotType(int slotIndex) {
-        InventorySlot slot = getSlot(slotIndex);
-        return slot == null || slot.isEmpty() ? null : slot.getType();
-    }
-
-    public int getSlotCount(int slotIndex) {
-        InventorySlot slot = getSlot(slotIndex);
-        return slot == null ? 0 : slot.getCount();
-    }
-
-    /**
-     * 建立目前背包 slot 的輕量快照。
-     */
     public List<InventorySlot> snapshotSlots() {
         List<InventorySlot> snapshot = new ArrayList<>();
         for (InventorySlot slot : slots) {
@@ -113,9 +84,6 @@ public class Inventory {
         return snapshot;
     }
 
-    /**
-     * 將背包還原成指定 slot 狀態。
-     */
     public void restoreSlots(List<InventorySlot> snapshot) {
         for (InventorySlot slot : slots) {
             slot.clear();
@@ -127,18 +95,9 @@ public class Inventory {
         }
     }
 
-    /**
-     * 回傳所有道具種類，供 HUD 自動迭代顯示。
-     */
-    public PickupType[] getDisplayTypes() {
-        return PickupType.values();
-    }
-
     private InventorySlot findSlot(PickupType type) {
         for (InventorySlot slot : slots) {
-            if (!slot.isEmpty() && slot.getType() == type) {
-                return slot;
-            }
+            if (!slot.isEmpty() && slot.getType() == type) return slot;
         }
         return null;
     }

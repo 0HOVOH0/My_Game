@@ -12,7 +12,7 @@ public class BombEntity {
     public static final double RADIUS = 150.0;
     public static final int DAMAGE = 85;
 
-    private static final double SIZE = 18.0;
+    private static final double SIZE = 22.0;
     private static final double AIR_DRAG = 0.94;
 
     private double x;
@@ -49,6 +49,8 @@ public class BombEntity {
     }
 
     public void update(double dt, Rectangle2D ground, Rectangle2D[] platforms, Rectangle2D[] covers) {
+        double oldX = x;
+        double oldY = y;
         update(dt);
         if (landed || hasExploded()) return;
 
@@ -61,6 +63,7 @@ public class BombEntity {
         if (covers != null) {
             for (Rectangle2D cover : covers) {
                 if (cover != null && tryLandOn(cover)) return;
+                if (cover != null && resolveWallBounce(cover, oldX, oldY)) return;
             }
         }
     }
@@ -82,15 +85,46 @@ public class BombEntity {
         return true;
     }
 
+    private boolean resolveWallBounce(Rectangle2D wall, double oldX, double oldY) {
+        Rectangle2D hitbox = getHitbox();
+        if (!hitbox.intersects(wall)) return false;
+
+        Rectangle2D oldHitbox = new Rectangle2D(oldX - SIZE / 2.0, oldY - SIZE / 2.0, SIZE, SIZE);
+        if (oldHitbox.getMaxX() <= wall.getMinX()) {
+            x = wall.getMinX() - SIZE / 2.0 - 0.5;
+            velocityX = -Math.abs(velocityX) * 0.25;
+        } else if (oldHitbox.getMinX() >= wall.getMaxX()) {
+            x = wall.getMaxX() + SIZE / 2.0 + 0.5;
+            velocityX = Math.abs(velocityX) * 0.25;
+        } else if (oldHitbox.getMinY() >= wall.getMaxY()) {
+            y = wall.getMaxY() + SIZE / 2.0 + 0.5;
+            velocityY = Math.max(40.0, Math.abs(velocityY) * 0.2);
+        } else {
+            y = wall.getMinY() - SIZE / 2.0;
+            velocityX = 0;
+            velocityY = 0;
+            landed = true;
+            timer = 0;
+        }
+        return true;
+    }
+
     public void draw(GraphicsContext gc) {
         if (!alive) return;
         gc.save();
         if (!hasExploded()) {
             double pulse = landed ? 1.0 + 0.18 * Math.abs(Math.sin(timer * 10.0)) : 1.0;
             double size = SIZE * pulse;
-            gc.setFill(landed && timer % 0.35 < 0.18 ? Color.DIMGRAY : Color.ORANGERED);
+            gc.setFill(landed && timer % 0.35 < 0.18 ? Color.web("#151515") : Color.web("#050505"));
             gc.fillOval(x - size / 2.0, y - size / 2.0, size, size);
-            gc.setStroke(Color.WHITE);
+            gc.setFill(Color.web("#3b3b3b"));
+            gc.fillOval(x - size * 0.22, y - size * 0.34, size * 0.25, size * 0.22);
+            gc.setStroke(Color.web("#d6c49a"));
+            gc.setLineWidth(2);
+            gc.strokeLine(x + size * 0.20, y - size * 0.35, x + size * 0.42, y - size * 0.62);
+            gc.setFill(Color.ORANGE);
+            gc.fillOval(x + size * 0.36, y - size * 0.72, size * 0.22, size * 0.22);
+            gc.setStroke(Color.web("#dddddd"));
             gc.strokeOval(x - size / 2.0, y - size / 2.0, size, size);
         } else {
             double progress = Math.min(1.0, (timer - FUSE_TIME) / EXPLOSION_TIME);

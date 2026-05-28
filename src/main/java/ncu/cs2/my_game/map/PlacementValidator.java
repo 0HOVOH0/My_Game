@@ -50,7 +50,9 @@ public class PlacementValidator {
     public boolean isValidExitPlacement(Rectangle2D exitBounds) {
         if (exitBounds == null) return false;
         if (map.getSpawnSafeZone() != null && map.getSpawnSafeZone().intersects(exitBounds)) return false;
-        if (exitBounds.getMinX() < map.getWorldWidth() * 0.65) return false;
+        double exitCenterProgress = (exitBounds.getMinX() + exitBounds.getWidth() / 2.0)
+            / map.getWorldWidth();
+        if (exitCenterProgress < 0.98 || exitCenterProgress > 1.0) return false;
         double minDistance = TileMap.MIN_EXIT_DISTANCE_FROM_SPAWN_TILES * TileMap.TILE_SIZE;
         double dx = exitBounds.getMinX() - map.getSpawnX();
         if (Math.abs(dx) < minDistance) return false;

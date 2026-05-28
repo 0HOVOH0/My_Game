@@ -120,10 +120,29 @@ public final class Collision {
      */
     public static int resolveSolid(Entity e, Rectangle2D solid) {
         Rectangle2D hitbox = e.getHitbox();
+        int sweptResult = resolveSweptSolid(e, hitbox, solid);
+        if (sweptResult != 0) return sweptResult;
         if (!checkAABB(hitbox, solid)) return 0;
 
+        Rectangle2D previous = new Rectangle2D(e.getPreviousX(), e.getPreviousY(),
+            hitbox.getWidth(), hitbox.getHeight());
         double overlapX = getOverlapX(hitbox, solid);
         double overlapY = getOverlapY(hitbox, solid);
+
+        // Once an entity was beside a wall in the previous frame, keep resolving it
+        // sideways. A shallow corner overlap must not cancel gravity and suspend it
+        // under an overhang.
+        boolean wasAbove = previous.getMaxY() <= solid.getMinY();
+        boolean wasBelow = previous.getMinY() >= solid.getMaxY();
+        boolean wasLeft = previous.getMaxX() <= solid.getMinX();
+        boolean wasRight = previous.getMinX() >= solid.getMaxX();
+        boolean enteringVertically = (wasAbove && e.getVelocityY() >= 0)
+            || (wasBelow && e.getVelocityY() < 0);
+        if ((wasLeft || wasRight) && !enteringVertically) {
+            e.setX(e.getX() + overlapX);
+            e.setVelocityX(0);
+            return overlapX < 0 ? 1 : 2;
+        }
 
         if (Math.abs(overlapX) < Math.abs(overlapY)) {
             e.setX(e.getX() + overlapX);
@@ -134,5 +153,61 @@ public final class Collision {
         e.setY(e.getY() + overlapY);
         e.setVelocityY(0);
         return overlapY < 0 ? -1 : -2;
+    }
+
+    /**
+     * Resolves a solid crossed completely within one frame. This catches fast falls and
+     * corner passes where the final AABB is already beyond a wall and therefore no longer
+     * overlaps it.
+     */
+    private static int resolveSweptSolid(Entity e, Rectangle2D current, Rectangle2D solid) {
+        Rectangle2D previous = new Rectangle2D(e.getPreviousX(), e.getPreviousY(),
+            current.getWidth(), current.getHeight());
+        boolean horizontalSweepOverlap = sweptRangesOverlap(previous.getMinX(), previous.getMaxX(),
+            current.getMinX(), current.getMaxX(), solid.getMinX(), solid.getMaxX());
+        boolean verticalSweepOverlap = sweptRangesOverlap(previous.getMinY(), previous.getMaxY(),
+            current.getMinY(), current.getMaxY(), solid.getMinY(), solid.getMaxY());
+
+        if (e.getVelocityY() >= 0
+                && previous.getMaxY() <= solid.getMinY()
+                && current.getMaxY() >= solid.getMinY()
+                && horizontalSweepOverlap) {
+            e.setY(solid.getMinY() - current.getHeight());
+            e.setVelocityY(0);
+            return -1;
+        }
+        if (e.getVelocityY() < 0
+                && previous.getMinY() >= solid.getMaxY()
+                && current.getMinY() <= solid.getMaxY()
+                && horizontalSweepOverlap) {
+            e.setY(solid.getMaxY());
+            e.setVelocityY(0);
+            return -2;
+        }
+        if (e.getVelocityX() > 0
+                && previous.getMaxX() <= solid.getMinX()
+                && current.getMaxX() >= solid.getMinX()
+                && verticalSweepOverlap) {
+            e.setX(solid.getMinX() - current.getWidth());
+            e.setVelocityX(0);
+            return 1;
+        }
+        if (e.getVelocityX() < 0
+                && previous.getMinX() >= solid.getMaxX()
+                && current.getMinX() <= solid.getMaxX()
+                && verticalSweepOverlap) {
+            e.setX(solid.getMaxX());
+            e.setVelocityX(0);
+            return 2;
+        }
+        return 0;
+    }
+
+    private static boolean sweptRangesOverlap(double previousMin, double previousMax,
+                                               double currentMin, double currentMax,
+                                               double solidMin, double solidMax) {
+        double sweepMin = Math.min(previousMin, currentMin);
+        double sweepMax = Math.max(previousMax, currentMax);
+        return sweepMax > solidMin && sweepMin < solidMax;
     }
 }

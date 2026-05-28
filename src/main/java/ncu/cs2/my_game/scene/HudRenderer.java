@@ -6,16 +6,23 @@ import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.scene.text.TextAlignment;
 import ncu.cs2.my_game.Config;
+import ncu.cs2.my_game.Main;
 import ncu.cs2.my_game.entity.Player;
 import ncu.cs2.my_game.item.Inventory;
 import ncu.cs2.my_game.item.InventorySlot;
 import ncu.cs2.my_game.item.PickupItem;
 import ncu.cs2.my_game.item.PickupType;
+import ncu.cs2.my_game.item.PotionInventory;
+import ncu.cs2.my_game.progress.PlayerProgress;
+import ncu.cs2.my_game.progress.TalentOption;
+
+import java.util.List;
 
 /** 共用玩家 HUD 繪製工具。 */
 public final class HudRenderer {
 
     private static final String[] SLOT_KEYS = {"U", "I", "O"};
+    private static final String[] POTION_KEYS = {"N", "M"};
     private static Image coinIcon;
 
     private HudRenderer() {}
@@ -31,7 +38,9 @@ public final class HudRenderer {
                 String.format("%.0f / %.0f", player.getMana(), player.getMaxMana()),
                 Color.DEEPSKYBLUE, Color.DODGERBLUE, Color.ROYALBLUE);
 
-        drawFireballIcon(gc, player, 12, 62);
+        drawExperienceBar(gc, Main.getPlayerProgress(), 12, 62);
+
+        drawFireballIcon(gc, player, 12, 90);
 
         gc.setFill(Color.LIGHTGRAY);
         gc.setFont(Font.font(12));
@@ -97,6 +106,127 @@ public final class HudRenderer {
         gc.setFill(Color.WHITE);
         gc.setFont(Font.font(12));
         gc.fillText("Gold: " + gold, x + 29, y + 16);
+        gc.restore();
+    }
+
+    public static void drawPotionSlots(GraphicsContext gc, PotionInventory inventory) {
+        double x = Config.WINDOW_WIDTH - 178;
+        double y = 194;
+        double rowH = 36;
+
+        gc.save();
+        gc.setFont(Font.font(11));
+        for (int i = 0; i < inventory.getCapacity(); i++) {
+            InventorySlot slot = inventory.getSlot(i);
+            gc.setFill(Color.web("#10202a", 0.86));
+            gc.fillRoundRect(x, y + i * rowH, 166, 29, 6, 6);
+            gc.setStroke(Color.web("#36b78a"));
+            gc.strokeRoundRect(x, y + i * rowH, 166, 29, 6, 6);
+            gc.setFill(Color.web("#bdeee0"));
+            gc.fillText("Potion [" + potionKey(i) + "]:", x + 8, y + i * rowH + 12);
+            if (slot == null || slot.isEmpty()) {
+                gc.setFill(Color.web("#b8bcc9"));
+                gc.fillText("Empty", x + 84, y + i * rowH + 21);
+            } else {
+                slot.getType().drawIcon(gc, x + 85, y + i * rowH + 7, 16);
+                gc.setFill(Color.WHITE);
+                gc.fillText(slot.getType().getHudLabel() + " x" + slot.getCount(),
+                    x + 104, y + i * rowH + 21);
+            }
+        }
+        gc.restore();
+    }
+
+    public static void drawStageProgress(GraphicsContext gc, double playerX,
+                                         double spawnX, double goalX) {
+        double distance = Math.max(1.0, goalX - spawnX);
+        double ratio = Math.max(0.0, Math.min(1.0, (playerX - spawnX) / distance));
+        double x = 12;
+        double y = 132;
+        double width = 154;
+
+        gc.save();
+        gc.setFill(Color.web("#9fb7c8"));
+        gc.setFont(Font.font("monospace", 9));
+        gc.fillText("PROGRESS", x, y - 4);
+        gc.setFill(Color.web("#232733"));
+        gc.fillRect(x, y, width, 7);
+        gc.setFill(Color.web("#8af0ff"));
+        gc.fillRect(x, y, width * ratio, 7);
+        gc.setStroke(Color.web("#556071"));
+        gc.strokeRect(x, y, width, 7);
+        gc.setFill(Color.web("#dce4ff"));
+        gc.fillText(String.format("%d%%", Math.round(ratio * 100)), x + width + 6, y + 7);
+        gc.restore();
+    }
+
+    public static void drawExperienceBar(GraphicsContext gc, PlayerProgress progress,
+                                         double x, double y) {
+        double width = 160;
+        double height = 9;
+        double ratio = Math.max(0.0, Math.min(1.0,
+            (double) progress.getExp() / Math.max(1, progress.getNextExp())));
+        gc.save();
+        gc.setFill(Color.web("#d8dcff"));
+        gc.setFont(Font.font("monospace", 10));
+        gc.fillText("LV." + progress.getLevel(), x, y - 3);
+        gc.setFill(Color.web("#1d1d26"));
+        gc.fillRect(x, y, width, height);
+        gc.setFill(Color.web("#b970ff"));
+        gc.fillRect(x, y, width * ratio, height);
+        gc.setStroke(Color.web("#49355f"));
+        gc.strokeRect(x, y, width, height);
+        gc.setFill(Color.WHITE);
+        gc.fillText(progress.getExp() + " / " + progress.getNextExp() + " EXP",
+            x + width + 8, y + height);
+        gc.restore();
+    }
+
+    public static void drawTalentSelection(GraphicsContext gc, PlayerProgress progress) {
+        if (!progress.hasPendingTalentChoice()) return;
+        List<TalentOption> choices = progress.getPendingChoices();
+        gc.save();
+        gc.setGlobalAlpha(0.78);
+        gc.setFill(Color.BLACK);
+        gc.fillRect(0, 0, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
+        gc.setGlobalAlpha(1.0);
+
+        double panelW = 620;
+        double panelH = 270;
+        double x = (Config.WINDOW_WIDTH - panelW) / 2.0;
+        double y = (Config.WINDOW_HEIGHT - panelH) / 2.0;
+        gc.setFill(Color.web("#121622"));
+        gc.fillRoundRect(x, y, panelW, panelH, 12, 12);
+        gc.setStroke(Color.web("#b970ff"));
+        gc.setLineWidth(2);
+        gc.strokeRoundRect(x, y, panelW, panelH, 12, 12);
+
+        gc.setFill(Color.WHITE);
+        gc.setFont(Font.font("Arial", 24));
+        gc.setTextAlign(TextAlignment.CENTER);
+        gc.fillText("LEVEL UP - Choose One Talent", Config.WINDOW_WIDTH / 2.0, y + 42);
+
+        double cardW = 178;
+        double cardH = 150;
+        double gap = 22;
+        double startX = x + 34;
+        for (int i = 0; i < choices.size(); i++) {
+            TalentOption option = choices.get(i);
+            double cx = startX + i * (cardW + gap);
+            gc.setFill(Color.web("#1b2030"));
+            gc.fillRoundRect(cx, y + 72, cardW, cardH, 8, 8);
+            gc.setStroke(Color.web("#6f7cff"));
+            gc.strokeRoundRect(cx, y + 72, cardW, cardH, 8, 8);
+            gc.setFill(Color.GOLD);
+            gc.setFont(Font.font("Arial", 15));
+            gc.fillText("[" + (i + 1) + "] " + option.getName(), cx + cardW / 2.0, y + 105);
+            gc.setFill(Color.web("#d7edf2"));
+            gc.setFont(Font.font("Arial", 13));
+            gc.fillText(option.getDescription(), cx + cardW / 2.0, y + 142);
+            gc.setFill(Color.web("#9fa8c8"));
+            gc.setFont(Font.font("Arial", 11));
+            gc.fillText("Press " + (i + 1), cx + cardW / 2.0, y + 190);
+        }
         gc.restore();
     }
 
@@ -168,6 +298,40 @@ public final class HudRenderer {
         gc.restore();
     }
 
+    public static void drawPotionFullPrompt(GraphicsContext gc, PotionInventory inventory,
+                                            PickupItem groundItem) {
+        double x = 18;
+        double y = 116;
+        double w = 230;
+        double h = 122;
+
+        gc.save();
+        gc.setFill(Color.web("#071a18", 0.9));
+        gc.fillRoundRect(x, y, w, h, 8, 8);
+        gc.setStroke(Color.web("#36b78a"));
+        gc.setLineWidth(2);
+        gc.strokeRoundRect(x, y, w, h, 8, 8);
+        gc.setFill(Color.web("#70e3bd"));
+        gc.setFont(Font.font(15));
+        gc.fillText("Potion Slots Full", x + 12, y + 22);
+        gc.setFill(Color.WHITE);
+        gc.setFont(Font.font(12));
+        gc.fillText("Ground Potion:", x + 12, y + 44);
+        groundItem.getType().drawIcon(gc, x + 104, y + 29, 20);
+        gc.fillText(groundItem.getType().getHudLabel() + " x" + groundItem.getQuantity(),
+            x + 130, y + 44);
+        gc.setFill(Color.LIGHTGRAY);
+        gc.fillText("Replace:", x + 12, y + 66);
+        for (int i = 0; i < inventory.getCapacity(); i++) {
+            InventorySlot slot = inventory.getSlot(i);
+            String name = slot == null || slot.isEmpty()
+                ? "Empty" : slot.getType().getHudLabel() + " x" + slot.getCount();
+            gc.fillText(potionKey(i) + " -> Potion" + (i + 1) + ": " + name,
+                x + 12, y + 87 + i * 17);
+        }
+        gc.restore();
+    }
+
     private static void drawOverlaySlot(GraphicsContext gc, InventorySlot slot, int index,
                                         boolean selected, double x, double y, double w) {
         gc.setFill(selected ? Color.web("#2d2940") : Color.web("#151824"));
@@ -193,6 +357,10 @@ public final class HudRenderer {
 
     private static String slotKey(int index) {
         return index >= 0 && index < SLOT_KEYS.length ? SLOT_KEYS[index] : "-";
+    }
+
+    private static String potionKey(int index) {
+        return index >= 0 && index < POTION_KEYS.length ? POTION_KEYS[index] : "-";
     }
 
     private static Image getCoinIcon() {
@@ -261,7 +429,7 @@ public final class HudRenderer {
     }
 
     public static void drawControlsHint(GraphicsContext gc) {
-        final String hint = "[A/D] 移動  [W] 跳躍  [S] 穿台/蹲  [J] 攻擊  [K] 火球  [U/I/O] 道具  [B] 背包  [P] 暫停";
+        final String hint = "[A/D] 移動  [W] 跳躍  [S] 穿台/蹲  [J] 攻擊  [K] 火球  [U/I/O] 道具  [N/M] 藥水  [B] 背包  [P] 暫停";
         final double barH = 18;
         final double y = Config.WINDOW_HEIGHT - barH;
         gc.save();

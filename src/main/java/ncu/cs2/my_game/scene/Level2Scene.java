@@ -27,6 +27,7 @@ import ncu.cs2.my_game.item.ItemSpawnResolver;
 import ncu.cs2.my_game.item.ItemSpawnManager;
 import ncu.cs2.my_game.item.PickupItem;
 import ncu.cs2.my_game.item.PickupType;
+import ncu.cs2.my_game.item.PotionInventory;
 import ncu.cs2.my_game.item.UseContext;
 import ncu.cs2.my_game.map.DungeonMapRenderer;
 import ncu.cs2.my_game.map.MapValidationResult;
@@ -41,6 +42,7 @@ import ncu.cs2.my_game.state.StageSnapshot;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
 
@@ -68,7 +70,6 @@ public class Level2Scene extends AnimationTimer {
     // ── 地圖常數 ─────────────────────────────────────────────────────────────
 
     /** 地板 Y 座標 */
-    private static final double GROUND_Y = Config.WINDOW_HEIGHT - Config.GROUND_THICKNESS;
 
     /** 普通關世界寬度，Canvas 只顯示其中一段。 */
     private static final double WORLD_WIDTH = TileMap.TILE_SIZE * 96.0;
@@ -84,8 +85,8 @@ public class Level2Scene extends AnimationTimer {
     /** 終點門高度 */
     private static final double GOAL_H = 150.0;
 
-    /** 加血道具尺寸（正方形，像素） */
-    private static final double ITEM_SIZE = 20.0;
+    /** 舊版補血生成點也沿用地板道具尺寸與圖示比例。 */
+    private static final double ITEM_SIZE = PickupItem.SIZE;
 
     /** 加血道具回復的血量 */
     private static final int ITEM_HEAL = 30;
@@ -95,6 +96,9 @@ public class Level2Scene extends AnimationTimer {
 
     /** 小兵出生前必須具備的有效巡邏寬度。 */
     private static final double MIN_ENEMY_PATROL_WIDTH = Enemy.ENEMY_W + Config.PLAYER_WIDTH + 48.0;
+
+    /** 同一平台多隻小兵出生時的最小水平間距。 */
+    private static final double ENEMY_SPAWN_SPACING = Enemy.ENEMY_W + 18.0;
 
     // ── 欄位 ─────────────────────────────────────────────────────────────────
 
@@ -146,6 +150,9 @@ public class Level2Scene extends AnimationTimer {
 
     /** 跨關卡背包 */
     private final Inventory inventory;
+
+    /** 跨關卡藥水欄，與三格一般道具分開保存。 */
+    private final PotionInventory potionInventory;
 
     /** 敵人掉落是否已處理 */
     private final boolean[] enemyDropsHandled;
@@ -217,15 +224,23 @@ public class Level2Scene extends AnimationTimer {
 
         // ── 初始化玩家（帶入 Level1 結束時的血量） ────────────────────────────
         player = new Player(tileMap.getSpawnX(), tileMap.getSpawnY());
+        Main.applyPlayerProgress(player);
         player.setHp(Main.getPersistedHp());
         player.setMana(Main.getPersistedMana());
         player.startInvincibility(Config.PLAYER_SPAWN_PROTECTION_SECONDS);
         effectManager = new EffectManager();
-        flowController = GameFlowController.forScene(this::cleanup, () -> Main.startLevel2());
+        // R 鍵回滾至初始快照（同一張地圖），Shift+R 才回到 Level1 重新開始
+        flowController = new GameFlowController(
+            this::rollbackToInitialSnapshot,
+            () -> { cleanup(); Main.startLevel1(); },
+            () -> { cleanup(); Main.exitToMainMenu(); },
+            () -> { cleanup(); javafx.application.Platform.exit(); }
+        );
         Main.registerActiveScene("LEVEL_2", 2, GameState.PLAYING, this::cleanup);
 
         // ── 地板 ──────────────────────────────────────────────────────────────
-        ground = new Rectangle2D(0, GROUND_Y, WORLD_WIDTH, Config.GROUND_THICKNESS);
+        double mapGroundY = (tileMap.getHeightTiles() - 1) * TileMap.TILE_SIZE;
+        ground = new Rectangle2D(0, mapGroundY, WORLD_WIDTH, TileMap.TILE_SIZE);
 
         platforms = createProceduralPlatforms();
         covers = createCoverWalls();
@@ -244,6 +259,7 @@ public class Level2Scene extends AnimationTimer {
         goldPickups = new ArrayList<>();
         bombs = new ArrayList<>();
         inventory = Main.getInventory();
+        potionInventory = Main.getPotionInventory();
         enemyDropsHandled = new boolean[enemies.length];
         itemSpawnManager = new ItemSpawnManager(ground, platforms, covers);
         goldSpawnManager = new GoldSpawnManager(ground, platforms, covers);
@@ -276,9 +292,16 @@ public class Level2Scene extends AnimationTimer {
         // ── 綁定鍵盤事件 ──────────────────────────────────────────────────────
         javafxScene.setOnKeyPressed(e -> {
             if (SceneTransitionManager.isTransitioning()) return;
-            if (!player.isAlive() && e.getCode() == KeyCode.R) {
-                rKeyPressed = true;
-                e.consume();
+            if (Main.hasPendingTalentChoice()) {
+                if (handleTalentChoiceKey(e.getCode())) e.consume();
+                return;
+            }
+            // 死亡狀態：只允許 R 鍵（重生），封鎖所有其他按鍵
+            if (!player.isAlive()) {
+                if (e.getCode() == KeyCode.R) {
+                    rKeyPressed = true;
+                    e.consume();
+                }
                 return;
             }
             if (isPortalEnterKey(e.getCode()) && isNearGoalDoor()) {
@@ -292,6 +315,7 @@ public class Level2Scene extends AnimationTimer {
                 effectManager.playSlash(player);
             }
             handleInventoryKey(e.getCode());
+            handlePotionKey(e.getCode());
             if (e.getCode() == KeyCode.B) {
                 inventoryOpen = !inventoryOpen;
             }
@@ -326,7 +350,7 @@ public class Level2Scene extends AnimationTimer {
         SceneTransitionManager.tick(dt);
         fps = dt > 0 ? 1.0 / dt : 0;
 
-        if (!flowController.isPaused()) {
+        if (!flowController.isPaused() && !Main.hasPendingTalentChoice()) {
             update(dt);
         }
         render(gc);
@@ -408,6 +432,7 @@ public class Level2Scene extends AnimationTimer {
 
         // 9. 敵人死亡掉落
         checkEnemyDrops();
+        updateFallingDrops(dt);
 
         // 10. 地板道具拾取
         checkPickupItems();
@@ -437,6 +462,17 @@ public class Level2Scene extends AnimationTimer {
             return;
         }
         inventory.useSlot(slotIndex, new UseContext(player, enemies, null, bombs));
+    }
+
+    private void handlePotionKey(KeyCode key) {
+        int slotIndex = keyToPotionSlotIndex(key);
+        if (slotIndex < 0) return;
+        if (trySwapGroundPotion(slotIndex)) return;
+        InventorySlot slot = potionInventory.getSlot(slotIndex);
+        boolean used = potionInventory.useSlot(slotIndex, new UseContext(player, enemies, null, bombs));
+        if (!used && slot != null && !slot.isEmpty() && player.getHp() >= player.getMaxHp()) {
+            showPickupNotice("HP Full");
+        }
     }
 
     private void tryResolvePlayerStandUp() {
@@ -474,13 +510,7 @@ public class Level2Scene extends AnimationTimer {
         double speedScale = Math.min(1.35, 1.0 + stageDefinition.getDifficulty() * 0.025);
         double projectileScale = Math.min(1.35, 1.0 + stageDefinition.getDifficulty() * 0.025);
 
-        List<Integer> candidates = new ArrayList<>();
-        for (int i = 1; i < platforms.length; i++) {
-            Rectangle2D patrolSegment = safeEnemyPatrolSegment(platforms[i]);
-            if (patrolSegment != null && patrolSegment.getWidth() >= MIN_ENEMY_PATROL_WIDTH) {
-                candidates.add(i);
-            }
-        }
+        List<Rectangle2D> candidates = collectEnemySpawnSurfaces();
         Collections.shuffle(candidates, random);
 
         int enemyCount = switch (stageDefinition.getType()) {
@@ -491,24 +521,84 @@ public class Level2Scene extends AnimationTimer {
             case SHOP, BOSS -> 6;
         };
         enemyCount += Math.min(3, stageDefinition.getDifficulty() / 4);
-        enemyCount = Math.min(enemyCount, candidates.size());
 
-        for (int i = 0; i < enemyCount; i++) {
-            boolean ranged = random.nextDouble() < rangedChance(i);
-            double ratio = 0.18 + random.nextDouble() * 0.64;
-            addEnemyOnPlatform(snapshots, candidates.get(i), ratio, ranged,
+        int spawned = 0;
+        for (int i = 0; i < candidates.size() && spawned < enemyCount; i++) {
+            int groupSize = 1 + random.nextInt(3);
+            groupSize = Math.min(groupSize, enemyCount - spawned);
+            spawned += addEnemyGroupOnSurface(snapshots, candidates.get(i), groupSize, spawned,
                 hpScale, damageScale, speedScale, projectileScale);
         }
-
-        if (stageDefinition.getDifficulty() >= 8) {
-            double leftGround = 720 + random.nextDouble() * 240;
-            double rightGround = 1130 + random.nextDouble() * 220;
-            snapshots.add(new EnemySnapshot(leftGround, GROUND_Y - Enemy.ENEMY_H, leftGround - 110, leftGround + 140,
-                false, hpScale, damageScale, speedScale, projectileScale));
-            snapshots.add(new EnemySnapshot(rightGround, GROUND_Y - Enemy.ENEMY_H, rightGround - 110, rightGround + 160,
-                true, hpScale, damageScale, speedScale, projectileScale));
-        }
         return snapshots;
+    }
+
+    private List<Rectangle2D> collectEnemySpawnSurfaces() {
+        List<Rectangle2D> surfaces = new ArrayList<>();
+        for (Rectangle2D zone : tileMap.getEnemyZones()) {
+            addEnemySurfaceIfUsable(surfaces, zone);
+        }
+        addGroundEnemySurfaces(surfaces);
+
+        if (surfaces.isEmpty()) {
+            for (Rectangle2D platform : platforms) {
+                if (isValidatedReachablePlatform(platform)) {
+                    addEnemySurfaceIfUsable(surfaces, platform);
+                }
+            }
+        }
+
+        surfaces.sort(Comparator.comparingDouble(Rectangle2D::getMinX));
+        return surfaces;
+    }
+
+    private void addGroundEnemySurfaces(List<Rectangle2D> surfaces) {
+        for (Rectangle2D segment : groundPatrolSegments()) {
+            if (segment.getWidth() >= MIN_ENEMY_PATROL_WIDTH
+                    && random.nextDouble() < 0.38 + Math.min(0.16, stageDefinition.getDifficulty() * 0.015)) {
+                addEnemySurfaceIfUsable(surfaces, segment);
+            }
+        }
+    }
+
+    private List<Rectangle2D> groundPatrolSegments() {
+        List<Rectangle2D> segments = new ArrayList<>();
+        double start = 0.0;
+        List<Rectangle2D> blockers = new ArrayList<>();
+        Collections.addAll(blockers, covers);
+        blockers.sort(Comparator.comparingDouble(Rectangle2D::getMinX));
+        for (Rectangle2D cover : blockers) {
+            if (Math.abs(cover.getMaxY() - ground.getMinY()) > 1.5) continue;
+            if (cover.getMinX() - start >= MIN_ENEMY_PATROL_WIDTH) {
+                segments.add(new Rectangle2D(start, ground.getMinY(),
+                    cover.getMinX() - start, ground.getHeight()));
+            }
+            start = Math.max(start, cover.getMaxX());
+        }
+        if (ground.getMaxX() - start >= MIN_ENEMY_PATROL_WIDTH) {
+            segments.add(new Rectangle2D(start, ground.getMinY(),
+                ground.getMaxX() - start, ground.getHeight()));
+        }
+        return segments;
+    }
+
+    private void addEnemySurfaceIfUsable(List<Rectangle2D> surfaces, Rectangle2D surface) {
+        Rectangle2D patrolSegment = safeEnemyPatrolSegment(surface);
+        if (patrolSegment == null || patrolSegment.getWidth() < MIN_ENEMY_PATROL_WIDTH) return;
+        if (isNearSpawnOrExit(patrolSegment)) return;
+        for (Rectangle2D existing : surfaces) {
+            boolean sameHeight = Math.abs(existing.getMinY() - patrolSegment.getMinY()) < 1.5;
+            boolean overlaps = existing.getMaxX() > patrolSegment.getMinX()
+                && existing.getMinX() < patrolSegment.getMaxX();
+            if (sameHeight && overlaps) return;
+        }
+        surfaces.add(patrolSegment);
+    }
+
+    private boolean isNearSpawnOrExit(Rectangle2D segment) {
+        double centerX = segment.getMinX() + segment.getWidth() / 2.0;
+        if (Math.abs(centerX - player.getX()) < TileMap.TILE_SIZE * 7) return true;
+        return goalDoor != null && Math.abs(centerX - (goalDoor.getMinX() + goalDoor.getWidth() / 2.0))
+            < TileMap.TILE_SIZE * 5;
     }
 
     private double rangedChance(int enemyIndex) {
@@ -523,19 +613,50 @@ public class Level2Scene extends AnimationTimer {
         return chance;
     }
 
-    private void addEnemyOnPlatform(List<EnemySnapshot> snapshots, int platformIndex, double ratio,
-                                    boolean ranged, double hpScale, double damageScale,
-                                    double speedScale, double projectileScale) {
-        if (platformIndex < 0 || platformIndex >= platforms.length) return;
-        Rectangle2D p = platforms[platformIndex];
-        Rectangle2D segment = safeEnemyPatrolSegment(p);
-        if (segment == null || segment.getWidth() < MIN_ENEMY_PATROL_WIDTH) return;
+    private int addEnemyGroupOnSurface(List<EnemySnapshot> snapshots, Rectangle2D surface,
+                                       int requestedCount, int spawnedSoFar,
+                                       double hpScale, double damageScale,
+                                       double speedScale, double projectileScale) {
+        Rectangle2D segment = safeEnemyPatrolSegment(surface);
+        if (segment == null || segment.getWidth() < MIN_ENEMY_PATROL_WIDTH) return 0;
         double patrolLeft = segment.getMinX();
         double patrolRight = Math.max(patrolLeft + Enemy.ENEMY_W + 8, segment.getMaxX());
-        double x = patrolLeft + Math.max(6.0, (segment.getWidth() - Enemy.ENEMY_W) * ratio);
-        x = Math.min(x, patrolRight - Enemy.ENEMY_W);
-        snapshots.add(new EnemySnapshot(x, p.getMinY() - Enemy.ENEMY_H,
-            patrolLeft, patrolRight, ranged, hpScale, damageScale, speedScale, projectileScale));
+        int capacity = Math.max(1, (int) Math.floor(
+            (segment.getWidth() - Enemy.ENEMY_W) / ENEMY_SPAWN_SPACING) + 1);
+        int count = Math.min(requestedCount, Math.min(3, capacity));
+        double usableLeft = patrolLeft + 8.0;
+        double usableRight = patrolRight - Enemy.ENEMY_W - 8.0;
+        if (usableRight < usableLeft) return 0;
+
+        int placed = 0;
+        double lane = (usableRight - usableLeft) / Math.max(1, count);
+        for (int i = 0; i < count; i++) {
+            double base = count == 1
+                ? (usableLeft + usableRight) / 2.0
+                : usableLeft + lane * (i + 0.5);
+            double jitter = Math.min(10.0, Math.max(0.0, lane * 0.22));
+            double x = Math.max(usableLeft, Math.min(usableRight,
+                base + (random.nextDouble() * 2.0 - 1.0) * jitter));
+            if (overlapsExistingEnemySpawn(snapshots, x, segment.getMinY())) continue;
+            boolean ranged = random.nextDouble() < rangedChance(spawnedSoFar + placed);
+            snapshots.add(new EnemySnapshot(x, segment.getMinY() - Enemy.ENEMY_H,
+                patrolLeft, patrolRight, ranged, hpScale, damageScale, speedScale, projectileScale));
+            placed++;
+        }
+        return placed;
+    }
+
+    private boolean overlapsExistingEnemySpawn(List<EnemySnapshot> snapshots, double x, double platformY) {
+        double y = platformY - Enemy.ENEMY_H;
+        Rectangle2D next = new Rectangle2D(x, y, Enemy.ENEMY_W, Enemy.ENEMY_H);
+        for (EnemySnapshot snapshot : snapshots) {
+            Rectangle2D existing = new Rectangle2D(snapshot.getX(), snapshot.getY(),
+                Enemy.ENEMY_W, Enemy.ENEMY_H);
+            if (existing.intersects(next)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Rectangle2D safeEnemyPatrolSegment(Rectangle2D platform) {
@@ -597,7 +718,48 @@ public class Level2Scene extends AnimationTimer {
                 }
             }
         }
+        addWallTopSpawnSurfaces(actualPlatforms);
         return actualPlatforms.toArray(Rectangle2D[]::new);
+    }
+
+    private void addWallTopSpawnSurfaces(List<Rectangle2D> actualPlatforms) {
+        for (int y = 2; y < tileMap.getHeightTiles() - 2; y++) {
+            int runStart = -1;
+            for (int x = 1; x <= tileMap.getWidthTiles() - 1; x++) {
+                boolean clearWallTop = x < tileMap.getWidthTiles() - 1
+                    && tileMap.getTile(x, y) == TileType.WALL
+                    && tileMap.getTile(x, y - 1) == TileType.EMPTY
+                    && tileMap.getTile(x, y - 2) == TileType.EMPTY;
+                if (clearWallTop && runStart < 0) {
+                    runStart = x;
+                } else if (!clearWallTop && runStart >= 0) {
+                    int length = x - runStart;
+                    if (length >= 3) {
+                        actualPlatforms.add(new Rectangle2D(runStart * TileMap.TILE_SIZE,
+                            y * TileMap.TILE_SIZE, length * TileMap.TILE_SIZE, PLAT_H));
+                    }
+                    runStart = -1;
+                }
+            }
+        }
+    }
+
+    /**
+     * Keep combat and collectible placement off optional ledges that did not
+     * pass the map generator's player-reachability graph.
+     */
+    private boolean isValidatedReachablePlatform(Rectangle2D platform) {
+        PlatformValidationResult validation = tileMap.getValidationResult();
+        if (validation == null) return true;
+        for (Rectangle2D unreachable : validation.unreachablePlatforms()) {
+            boolean sameHeight = Math.abs(unreachable.getMinY() - platform.getMinY()) < 1.5;
+            boolean overlaps = unreachable.getMaxX() > platform.getMinX()
+                && unreachable.getMinX() < platform.getMaxX();
+            if (sameHeight && overlaps) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private double rand(double min, double max) {
@@ -779,14 +941,10 @@ public class Level2Scene extends AnimationTimer {
      * 找到第一個碰撞面即停止，避免多平台邊緣衝突。
      */
     private void resolvePlayerPlatformCollisions() {
-        boolean groundedOnSolid = false;
         for (Rectangle2D cover : covers) {
-            int result = Collision.resolveSolid(player, cover);
-            if (result == -1) {
-                groundedOnSolid = true;
-            }
+            Collision.resolveSolid(player, cover);
         }
-        if (groundedOnSolid) {
+        if (hasSolidSupportUnderPlayer()) {
             player.setOnGround(true);
             return;
         }
@@ -811,6 +969,19 @@ public class Level2Scene extends AnimationTimer {
 
         // 沒踩到任何表面：玩家在空中
         player.setOnGround(false);
+    }
+
+    private boolean hasSolidSupportUnderPlayer() {
+        Rectangle2D hitbox = player.getHitbox();
+        double feetY = hitbox.getMaxY();
+        for (Rectangle2D cover : covers) {
+            boolean horizontalSupport = hitbox.getMaxX() > cover.getMinX() + 1
+                && hitbox.getMinX() < cover.getMaxX() - 1;
+            if (horizontalSupport && Math.abs(feetY - cover.getMinY()) <= 1.5) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void updatePlayerPlatformDrop(double dt) {
@@ -889,7 +1060,7 @@ public class Level2Scene extends AnimationTimer {
         for (Enemy enemy : enemies) {
             if (!enemy.isAlive()) continue;
             if (Collision.checkAABB(atkBox, enemy.getHitbox()) && player.isAttackHitting(enemy.getHitbox())) {
-                enemy.takeDamage(Player.ATTACK_DAMAGE);
+                enemy.takeDamage(Main.getPlayerMeleeDamage());
                 // 命中第一個敵人後標記，本次揮擊不再傷害其他目標
                 // 若需「貫穿」可移除 markHit() 改為多目標命中
                 player.markHit();
@@ -942,23 +1113,12 @@ public class Level2Scene extends AnimationTimer {
     }
 
     /**
-     * 火球撞到地板或任一平台時消失。
-     *
-     * @param fireball 要檢查的火球
+     * 火球只會被真正牆壁 / 掩體阻擋；跳板與單向平台不再攔截遠程攻擊。
      */
     private void destroyFireballOnWall(Fireball fireball) {
         if (Collision.checkAABB(fireball.getHitbox(), ground)) {
             fireball.destroy();
             return;
-        }
-
-        if (!fireball.isPiercingEnemies()) {
-            for (Rectangle2D platform : platforms) {
-                if (Collision.checkAABB(fireball.getHitbox(), platform)) {
-                    fireball.destroy();
-                    return;
-                }
-            }
         }
 
         for (Rectangle2D cover : covers) {
@@ -990,12 +1150,23 @@ public class Level2Scene extends AnimationTimer {
             if (enemy == null || enemyDropsHandled[i] || enemy.isAlive()) continue;
 
             enemyDropsHandled[i] = true;
-            addGold(random.nextInt(10) + 1,
-                enemy.getX(), enemy.getY() + enemy.getHeight() - GoldPickup.SIZE);
+            grantExperience(enemy instanceof RangedEnemy ? 26 : 18);
+            addFallingGold(random.nextInt(10) + 1,
+                enemy.getX() - 18, enemy.getY() + enemy.getHeight() - GoldPickup.SIZE);
             PickupType drop = rollEnemyDrop();
             if (drop != null) {
-                addPickup(drop, enemy.getX(), enemy.getY() + enemy.getHeight() - PickupItem.SIZE);
+                addFallingPickup(drop, enemy.getX() + 24,
+                    enemy.getY() + enemy.getHeight() - PickupItem.SIZE);
             }
+        }
+    }
+
+    private void grantExperience(int amount) {
+        if (Main.addExperience(amount)) {
+            Main.applyPlayerProgress(player);
+            showPickupNotice("LEVEL UP!");
+        } else {
+            showPickupNotice("+" + amount + " EXP");
         }
     }
 
@@ -1024,6 +1195,23 @@ public class Level2Scene extends AnimationTimer {
     private void addGold(int amount, double x, double y) {
         goldSpawnManager.setForbiddenZones(createHazardForbiddenZones());
         goldPickups.add(goldSpawnManager.spawn(amount, x, y, pickupItems, goldPickups));
+    }
+
+    private void addFallingPickup(PickupType type, double x, double y) {
+        pickupItems.add(itemSpawnManager.spawnDrop(type, x, y, 1));
+    }
+
+    private void addFallingGold(int amount, double x, double y) {
+        goldPickups.add(goldSpawnManager.spawnDrop(amount, x, y));
+    }
+
+    private void updateFallingDrops(double dt) {
+        for (PickupItem item : pickupItems) {
+            item.updateFalling(dt, ground, platforms, covers);
+        }
+        for (GoldPickup gold : goldPickups) {
+            gold.updateFalling(dt, ground, platforms, covers);
+        }
     }
 
     private List<Rectangle2D> createHazardForbiddenZones() {
@@ -1058,7 +1246,8 @@ public class Level2Scene extends AnimationTimer {
 
         List<Integer> supplyPlatforms = new ArrayList<>();
         for (int i = 0; i < platforms.length; i++) {
-            if (platforms[i].getWidth() >= PickupItem.SIZE + 24) {
+            if (isValidatedReachablePlatform(platforms[i])
+                    && platforms[i].getWidth() >= PickupItem.SIZE + 24) {
                 supplyPlatforms.add(i);
             }
         }
@@ -1080,8 +1269,21 @@ public class Level2Scene extends AnimationTimer {
     private double[] randomPickupPoint(int minPlatformIndex, int maxPlatformIndex) {
         int min = Math.max(0, Math.min(minPlatformIndex, platforms.length - 1));
         int max = Math.max(min, Math.min(maxPlatformIndex, platforms.length - 1));
-        return pickupPoint(min + random.nextInt(max - min + 1),
-            0.18 + random.nextDouble() * 0.64);
+        List<Integer> candidates = new ArrayList<>();
+        for (int i = min; i <= max; i++) {
+            if (isValidatedReachablePlatform(platforms[i])) {
+                candidates.add(i);
+            }
+        }
+        if (candidates.isEmpty()) {
+            for (int i = 0; i < platforms.length; i++) {
+                if (isValidatedReachablePlatform(platforms[i])) {
+                    candidates.add(i);
+                }
+            }
+        }
+        int platformIndex = candidates.isEmpty() ? min : candidates.get(random.nextInt(candidates.size()));
+        return pickupPoint(platformIndex, 0.18 + random.nextDouble() * 0.64);
     }
 
     private double[] pickupPoint(int platformIndex, double ratio) {
@@ -1128,7 +1330,10 @@ public class Level2Scene extends AnimationTimer {
         for (PickupItem item : pickupItems) {
             if (item.isPickedUp()) continue;
             if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
-                if (inventory.add(item.getType(), item.getQuantity())) {
+                boolean accepted = item.getType().isPotion()
+                    ? potionInventory.add(item.getType(), item.getQuantity())
+                    : inventory.add(item.getType(), item.getQuantity());
+                if (accepted) {
                     item.markPickedUp();
                     showPickupNotice("+" + item.getType().getHudLabel());
                 }
@@ -1188,14 +1393,41 @@ public class Level2Scene extends AnimationTimer {
         return true;
     }
 
+    private boolean trySwapGroundPotion(int slotIndex) {
+        PickupItem groundItem = findBlockedPotionUnderPlayer();
+        if (groundItem == null) return false;
+
+        InventorySlot dropped = potionInventory.replaceSlot(slotIndex,
+            groundItem.getType(), groundItem.getQuantity());
+        if (dropped == null) return false;
+
+        groundItem.markPickedUp();
+        addPickup(dropped.getType(), player.getX(),
+            player.getY() + player.getHeight() - PickupItem.SIZE, dropped.getCount());
+        pickupItems.removeIf(PickupItem::isPickedUp);
+        showPickupNotice("Potion swapped");
+        return true;
+    }
+
     private PickupItem findBlockedPickupUnderPlayer() {
         if (!inventory.isFull()) return null;
         for (PickupItem item : pickupItems) {
             if (item.isPickedUp()) continue;
+            if (item.getType().isPotion()) continue;
             if (inventory.contains(item.getType())) continue;
             if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
                 return item;
             }
+        }
+        return null;
+    }
+
+    private PickupItem findBlockedPotionUnderPlayer() {
+        if (!potionInventory.isFull()) return null;
+        for (PickupItem item : pickupItems) {
+            if (item.isPickedUp() || !item.getType().isPotion()) continue;
+            if (potionInventory.contains(item.getType())) continue;
+            if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) return item;
         }
         return null;
     }
@@ -1207,6 +1439,30 @@ public class Level2Scene extends AnimationTimer {
             case O -> 2;
             default -> -1;
         };
+    }
+
+    private int keyToPotionSlotIndex(KeyCode key) {
+        return switch (key) {
+            case N -> 0;
+            case M -> 1;
+            default -> -1;
+        };
+    }
+
+    private boolean handleTalentChoiceKey(KeyCode key) {
+        int index = switch (key) {
+            case DIGIT1, NUMPAD1 -> 0;
+            case DIGIT2, NUMPAD2 -> 1;
+            case DIGIT3, NUMPAD3 -> 2;
+            default -> -1;
+        };
+        if (index < 0) return false;
+        if (Main.chooseTalent(index) != null) {
+            Main.applyPlayerProgress(player);
+            showPickupNotice("Talent learned");
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -1262,7 +1518,7 @@ public class Level2Scene extends AnimationTimer {
      * @param gc 畫布繪圖上下文
      */
     private void render(GraphicsContext gc) {
-        DungeonMapRenderer.draw(gc, tileMap, cameraX, "BOSS");
+        DungeonMapRenderer.draw(gc, tileMap, cameraX, Main.peekNextSceneLabel());
         if (flowController.isDebugVisible()) {
             DungeonMapRenderer.drawDebug(gc, tileMap, cameraX);
         }
@@ -1339,13 +1595,7 @@ public class Level2Scene extends AnimationTimer {
         }
     }
 
-    /**
-     * 繪製加血道具（綠色十字符號）。
-     * 已拾取（healthItem == null）時不繪製。
-     * TODO: 換成旋轉發光的道具精靈圖。
-     *
-     * @param gc 畫布繪圖上下文
-     */
+    /** 繪製舊版補血生成點，沿用目前小藥水圖示以保持道具風格一致。 */
     private void drawHealthItem(GraphicsContext gc) {
         if (healthItem == null) return;
         if (!isVisible(healthItem)) return;
@@ -1353,21 +1603,7 @@ public class Level2Scene extends AnimationTimer {
         double ix = healthItem.getMinX();
         double iy = healthItem.getMinY();
         double s  = ITEM_SIZE;
-
-        // 外框（白色）增加辨識度
-        gc.setFill(Color.web("#ffffff"));
-        gc.fillRect(ix - 1, iy - 1, s + 2, s + 2);
-
-        // 十字背景（深綠底）
-        gc.setFill(Color.web("#1b5e20"));
-        gc.fillRect(ix, iy, s, s);
-
-        // 十字橫槓
-        gc.setFill(Color.LIMEGREEN);
-        gc.fillRect(ix, iy + s / 2 - 3, s, 6);
-
-        // 十字直槓
-        gc.fillRect(ix + s / 2 - 3, iy, 6, s);
+        PickupType.SMALL_POTION.drawIcon(gc, ix, iy, s);
     }
 
     /**
@@ -1414,18 +1650,27 @@ public class Level2Scene extends AnimationTimer {
      * @param gc 畫布繪圖上下文
      */
     private void drawHUD(GraphicsContext gc) {
-        HudRenderer.drawPlayerStatus(gc, player, stageDefinition.getHudTitle());
+        HudRenderer.drawPlayerStatus(gc, player,
+            Main.getStageLabel() + " - " + stageDefinition.getType().getLabel().toUpperCase());
+        HudRenderer.drawStageProgress(gc, player.getX(), tileMap.getSpawnX(),
+            goalDoor.getMinX() + goalDoor.getWidth() / 2.0);
         HudRenderer.drawGold(gc, Main.getGold());
         HudRenderer.drawInventorySlots(gc, inventory, selectedInventorySlot);
+        HudRenderer.drawPotionSlots(gc, potionInventory);
         PickupItem blockedItem = findBlockedPickupUnderPlayer();
         if (blockedItem != null) {
             HudRenderer.drawBackpackFullPrompt(gc, inventory, blockedItem);
+        }
+        PickupItem blockedPotion = findBlockedPotionUnderPlayer();
+        if (blockedPotion != null) {
+            HudRenderer.drawPotionFullPrompt(gc, potionInventory, blockedPotion);
         }
         if (inventoryOpen) {
             HudRenderer.drawInventoryOverlay(gc, inventory, selectedInventorySlot);
         }
         HudRenderer.drawControlsHint(gc);
         HudRenderer.drawPickupNotice(gc, pickupNotice, pickupNoticeTimer);
+        HudRenderer.drawTalentSelection(gc, Main.getPlayerProgress());
     }
 
     private List<String> debugLines() {

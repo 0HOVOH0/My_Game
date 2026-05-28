@@ -20,6 +20,11 @@ public class SmallPotionItem extends PickupItem {
     }
 
     @Override
+    public boolean canUse(UseContext context) {
+        return context.getPlayer().getHp() < context.getPlayer().getMaxHp();
+    }
+
+    @Override
     protected Color getFillColor() { return Color.LIMEGREEN; }
 
     @Override

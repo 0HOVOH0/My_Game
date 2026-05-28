@@ -39,4 +39,10 @@ public class ItemSpawnManager {
         Point2D point = resolver.findValidSpawnPosition(preferredX, preferredY, existingItems);
         return type.create(point.getX(), point.getY(), quantity);
     }
+
+    public PickupItem spawnDrop(PickupType type, double deathX, double deathY, int quantity) {
+        PickupItem item = type.create(deathX, deathY, quantity);
+        item.beginFall();
+        return item;
+    }
 }

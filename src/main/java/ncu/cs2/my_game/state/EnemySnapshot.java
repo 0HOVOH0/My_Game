@@ -41,6 +41,14 @@ public class EnemySnapshot {
         return new Enemy(x, y, patrolLeft, patrolRight, hpMultiplier, damageMultiplier, speedMultiplier);
     }
 
+    public double getX() {
+        return x;
+    }
+
+    public double getY() {
+        return y;
+    }
+
     public Enemy createEnemy(Player player) {
         if (ranged) {
             return new RangedEnemy(x, y, patrolLeft, patrolRight, player,

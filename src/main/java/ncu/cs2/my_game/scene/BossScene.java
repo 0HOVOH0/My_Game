@@ -32,14 +32,17 @@ import ncu.cs2.my_game.item.InventorySlot;
 import ncu.cs2.my_game.item.ItemSpawnManager;
 import ncu.cs2.my_game.item.PickupItem;
 import ncu.cs2.my_game.item.PickupType;
+import ncu.cs2.my_game.item.PotionInventory;
 import ncu.cs2.my_game.item.UseContext;
 import ncu.cs2.my_game.physics.Collision;
 import ncu.cs2.my_game.state.BossFightSnapshot;
 import ncu.cs2.my_game.state.StageSnapshot;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 
 /**
  * Boss 戰場景，繼承 AnimationTimer 充當遊戲迴圈。
@@ -49,11 +52,12 @@ import java.util.Random;
  * IDLE → CHASE → DASH（HP &lt; 60%）→ RAGE（HP &lt; 30%）。</p>
  *
  * <pre>
- * 房間配置（y 軸向下）：
+ * 房間配置（y 軸向下，GROUND_Y = WINDOW_HEIGHT - GROUND_THICKNESS = 582）：
  *
- *  y=340  [P2 中央高台]
- *  y=420  [P1 左低台]               [P3 右低台]   ← Boss 從右側登場
- *  y=550  =================== GROUND ===================
+ *  y≈270  [P6 頂台]                              ← 距中台 ≈112 px（玩家可跳到）
+ *  y≈382  [P4 中左台]   [P5 中右台]              ← 距低台 ≈108 px
+ *  y≈490  [P1 左低台]  [P2 中低台]  [P3 右低台]  ← 距地板  ≈92 px（Boss 也可跳到）
+ *  y=582  ============== GROUND ===============
  * </pre>
  *
  * <p>階段提示：</p>
@@ -118,6 +122,8 @@ public class BossScene extends AnimationTimer {
 
     /** 跨關卡背包 */
     private final Inventory inventory;
+
+    private final PotionInventory potionInventory;
 
     /** Boss 關可撿取道具 */
     private final List<PickupItem> pickupItems;
@@ -209,6 +215,7 @@ public class BossScene extends AnimationTimer {
 
     /** Boss 死亡掉落是否已產生 */
     private boolean bossDropHandled = false;
+    private final Set<Enemy> minionExpHandled = new HashSet<>();
 
     /** Boss 身體接觸傷害的冷卻計時器（秒）；> 0 時不會再次造成接觸傷害 */
     private double bossContactCooldown = 0;
@@ -220,6 +227,7 @@ public class BossScene extends AnimationTimer {
     private double bossPlatformDropTimer = 0;
     private Rectangle2D bossExitDoor = null;
     private double fps = 0;
+    private double visualTime = 0;
     private String pickupNotice = "";
     private double pickupNoticeTimer = 0;
 
@@ -246,11 +254,13 @@ public class BossScene extends AnimationTimer {
 
         // ── 初始化玩家（帶入 Level2 結束時的血量） ────────────────────────────
         player = new Player(70, 460);
+        Main.applyPlayerProgress(player);
         player.setHp(Main.getPersistedHp());
         player.setMana(Main.getPersistedMana());
         player.startInvincibility(Config.PLAYER_SPAWN_PROTECTION_SECONDS);
 
         inventory = Main.getInventory();
+        potionInventory = Main.getPotionInventory();
         pickupItems = new ArrayList<>();
         goldPickups = new ArrayList<>();
         bombs = new ArrayList<>();
@@ -261,12 +271,14 @@ public class BossScene extends AnimationTimer {
 
         // ── 三個閃躲用平台 ────────────────────────────────────────────────────
         platforms = new Rectangle2D[] {
-            new Rectangle2D( 36 + bossRand(-8, 14), 452 + bossRand(-6, 8), bossPlatformWidth(7, 9), PLAT_H),
-            new Rectangle2D(330 + bossRand(-14, 16), 452 + bossRand(-6, 8), bossPlatformWidth(7, 9), PLAT_H),
-            new Rectangle2D(615 + bossRand(-12, 10), 452 + bossRand(-6, 8), bossPlatformWidth(6, 8), PLAT_H),
-            new Rectangle2D(150 + bossRand(-12, 18), 326 + bossRand(-8, 10), bossPlatformWidth(6, 8), PLAT_H),
-            new Rectangle2D(515 + bossRand(-16, 12), 326 + bossRand(-8, 10), bossPlatformWidth(6, 8), PLAT_H),
-            new Rectangle2D(335 + bossRand(-14, 14), 202 + bossRand(-6, 8), bossPlatformWidth(5, 7), PLAT_H),
+            // GROUND_Y=582, 玩家最大跳高≈127px，Boss 最大跳高≈99px
+            // 低台 y≈490（距地板 ~92px）、中台 y≈382（距低台 ~108px）、頂台 y≈270（距中台 ~112px）
+            new Rectangle2D( 36 + bossRand(-8, 14), 490 + bossRand(-6, 8), bossPlatformWidth(7, 9), PLAT_H),
+            new Rectangle2D(330 + bossRand(-14, 16), 490 + bossRand(-6, 8), bossPlatformWidth(7, 9), PLAT_H),
+            new Rectangle2D(615 + bossRand(-12, 10), 490 + bossRand(-6, 8), bossPlatformWidth(6, 8), PLAT_H),
+            new Rectangle2D(150 + bossRand(-12, 18), 382 + bossRand(-8, 10), bossPlatformWidth(6, 8), PLAT_H),
+            new Rectangle2D(515 + bossRand(-16, 12), 382 + bossRand(-8, 10), bossPlatformWidth(6, 8), PLAT_H),
+            new Rectangle2D(335 + bossRand(-14, 14), 270 + bossRand(-6, 8), bossPlatformWidth(5, 7), PLAT_H),
         };
         covers = new Rectangle2D[0];
         visionBlockers = platforms;
@@ -275,6 +287,7 @@ public class BossScene extends AnimationTimer {
         bossType = Main.getOrCreateBossType();
         SceneTransitionManager.setBossFightState(BossFightState.FIGHTING);
         boss = createBoss();
+        minionExpHandled.clear();
         itemSpawnManager = new ItemSpawnManager(ground, platforms);
         goldSpawnManager = new GoldSpawnManager(ground, platforms);
         inventoryOpen = false;
@@ -291,6 +304,10 @@ public class BossScene extends AnimationTimer {
         // ── 鍵盤事件 ──────────────────────────────────────────────────────────
         javafxScene.setOnKeyPressed(e -> {
             if (SceneTransitionManager.isTransitioning()) return;
+            if (Main.hasPendingTalentChoice()) {
+                if (handleTalentChoiceKey(e.getCode())) e.consume();
+                return;
+            }
             if (!player.isAlive() && e.getCode() == KeyCode.R) {
                 rKeyPressed = true;
                 e.consume();
@@ -309,6 +326,7 @@ public class BossScene extends AnimationTimer {
                 effectManager.playSlash(player);
             }
             handleInventoryKey(e.getCode());
+            handlePotionKey(e.getCode());
             if (e.getCode() == KeyCode.B) {
                 inventoryOpen = !inventoryOpen;
             }
@@ -343,8 +361,9 @@ public class BossScene extends AnimationTimer {
         if (dt > Config.MAX_DELTA_TIME) dt = Config.MAX_DELTA_TIME;
         fps = dt > 0 ? 1.0 / dt : 0;
         SceneTransitionManager.tick(dt);
+        visualTime += dt;
 
-        if (!flowController.isPaused()) {
+        if (!flowController.isPaused() && !Main.hasPendingTalentChoice()) {
             update(dt);
         }
         render(gc);
@@ -385,6 +404,7 @@ public class BossScene extends AnimationTimer {
             updatePlayerPlatformDrop(dt);
             resolvePlayerPlatformCollisions();
             tryResolvePlayerStandUp();
+            updateFallingDrops(dt);
             checkPickupItems();
             checkGoldPickups();
             checkBossExitDoor();
@@ -392,6 +412,13 @@ public class BossScene extends AnimationTimer {
             // 仍更新視覺計時器，讓閃光與文字正常淡出
             if (flashTimer    > 0) flashTimer    -= dt;
             if (phaseTextTimer > 0) phaseTextTimer -= dt;
+            if (pickupNoticeTimer > 0) {
+                pickupNoticeTimer -= dt;
+                if (pickupNoticeTimer <= 0) {
+                    pickupNoticeTimer = 0;
+                    pickupNotice = "";
+                }
+            }
             return;
         }
 
@@ -421,6 +448,7 @@ public class BossScene extends AnimationTimer {
         updateBossMinionAwareness();
         boss.configureDashNavigation(covers, dashSurfaces, Config.WINDOW_WIDTH);
         boss.update(dt);
+        checkMinionExperienceRewards();
 
         // 3. 玩家平台碰撞解析
         resolvePlayerPlatformCollisions();
@@ -453,6 +481,7 @@ public class BossScene extends AnimationTimer {
         checkBossMinionsVsPlayer();
         checkBossMinionProjectilesVsPlayer();
         checkGroundSpikesVsPlayer();
+        updateFallingDrops(dt);
         checkPickupItems();
         checkGoldPickups();
         updateBombs(dt);
@@ -464,7 +493,13 @@ public class BossScene extends AnimationTimer {
         if (flashTimer    > 0) flashTimer    -= dt;
         if (phaseTextTimer > 0) phaseTextTimer -= dt;
         if (bossContactCooldown > 0) bossContactCooldown -= dt;
-        if (pickupNoticeTimer > 0) pickupNoticeTimer -= dt;
+        if (pickupNoticeTimer > 0) {
+            pickupNoticeTimer -= dt;
+            if (pickupNoticeTimer <= 0) {
+                pickupNoticeTimer = 0;
+                pickupNotice = "";
+            }
+        }
     }
 
     // ── 碰撞解析 ─────────────────────────────────────────────────────────────
@@ -721,6 +756,17 @@ public class BossScene extends AnimationTimer {
         inventory.useSlot(slotIndex, new UseContext(player, null, boss, bombs));
     }
 
+    private void handlePotionKey(KeyCode key) {
+        int slotIndex = keyToPotionSlotIndex(key);
+        if (slotIndex < 0) return;
+        if (trySwapGroundPotion(slotIndex)) return;
+        InventorySlot slot = potionInventory.getSlot(slotIndex);
+        boolean used = potionInventory.useSlot(slotIndex, new UseContext(player, null, boss, bombs));
+        if (!used && slot != null && !slot.isEmpty() && player.getHp() >= player.getMaxHp()) {
+            showPickupNotice("HP Full");
+        }
+    }
+
     private void tryResolvePlayerStandUp() {
         if (!player.wantsToStandUp()) return;
 
@@ -790,13 +836,13 @@ public class BossScene extends AnimationTimer {
         if (atkBox == null) return;
 
         if (Collision.checkAABB(atkBox, boss.getHitbox()) && player.isAttackHitting(boss.getHitbox())) {
-            boss.takeDamage(Player.ATTACK_DAMAGE);
+            boss.takeDamage(Main.getPlayerMeleeDamage());
             player.markHit();   // 標記命中，本次揮擊結束前不再傷害 Boss
         }
         for (Enemy minion : boss.getMinions()) {
             if (!minion.isAlive()) continue;
             if (Collision.checkAABB(atkBox, minion.getHitbox()) && player.isAttackHitting(minion.getHitbox())) {
-                minion.takeDamage(Player.ATTACK_DAMAGE);
+                minion.takeDamage(Main.getPlayerMeleeDamage());
                 player.markHit();
                 break;
             }
@@ -862,9 +908,7 @@ public class BossScene extends AnimationTimer {
     }
 
     /**
-     * 火球撞到 Boss 場景的地板或平台時消失。
-     *
-     * @param fireball 要檢查的火球
+     * 火球只會被地面邊界與真正掩體阻擋；Boss 房跳板不再攔截火球。
      */
     private void destroyFireballOnWall(Fireball fireball) {
         if (Collision.checkAABB(fireball.getHitbox(), ground)) {
@@ -872,14 +916,6 @@ public class BossScene extends AnimationTimer {
             return;
         }
 
-        if (!fireball.isPiercingEnemies()) {
-            for (Rectangle2D platform : platforms) {
-                if (Collision.checkAABB(fireball.getHitbox(), platform)) {
-                    fireball.destroy();
-                    return;
-                }
-            }
-        }
         for (Rectangle2D cover : covers) {
             if (Collision.checkAABB(fireball.getHitbox(), cover)) {
                 fireball.destroy();
@@ -927,13 +963,6 @@ public class BossScene extends AnimationTimer {
     private boolean isFireballTouchingWall(Fireball fireball) {
         if (Collision.checkAABB(fireball.getHitbox(), ground)) return true;
 
-        if (!fireball.isPiercingEnemies()) {
-            for (Rectangle2D platform : platforms) {
-                if (Collision.checkAABB(fireball.getHitbox(), platform)) {
-                    return true;
-                }
-            }
-        }
         for (Rectangle2D cover : covers) {
             if (Collision.checkAABB(fireball.getHitbox(), cover)) {
                 return true;
@@ -963,7 +992,10 @@ public class BossScene extends AnimationTimer {
         for (PickupItem item : pickupItems) {
             if (item.isPickedUp()) continue;
             if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
-                if (inventory.add(item.getType(), item.getQuantity())) {
+                boolean accepted = item.getType().isPotion()
+                    ? potionInventory.add(item.getType(), item.getQuantity())
+                    : inventory.add(item.getType(), item.getQuantity());
+                if (accepted) {
                     item.markPickedUp();
                     showPickupNotice("+" + item.getType().getHudLabel());
                 }
@@ -976,17 +1008,34 @@ public class BossScene extends AnimationTimer {
      * Boss 死亡必掉至少一個稀有道具，並額外機率掉大藥水。
      */
     private void spawnBossDrops() {
+        grantExperience(180);
         PickupType rare = random.nextBoolean() ? PickupType.FIRE_SCROLL : PickupType.ICE_SCROLL;
-        addPickup(rare, boss.getX(), boss.getY() + boss.getHeight() - PickupItem.SIZE);
+        double baseX = boss.getX() + boss.getWidth() / 2.0;
+        double baseY = boss.getY() + boss.getHeight() - PickupItem.SIZE;
+        addFallingPickup(rare, baseX - 54, baseY);
 
         if (random.nextDouble() < 0.65) {
-            addPickup(PickupType.LARGE_POTION,
-                        boss.getX() + PickupItem.SIZE + 6,
-                        boss.getY() + boss.getHeight() - PickupItem.SIZE);
+            addFallingPickup(PickupType.LARGE_POTION, baseX, baseY);
         }
-        addGold(30 + random.nextInt(71),
-                boss.getX() + PickupItem.SIZE * 2,
+        addFallingGold(30 + random.nextInt(71), baseX + 54,
                 boss.getY() + boss.getHeight() - GoldPickup.SIZE);
+    }
+
+    private void checkMinionExperienceRewards() {
+        for (Enemy minion : boss.getMinions()) {
+            if (minion.isAlive() || minionExpHandled.contains(minion)) continue;
+            minionExpHandled.add(minion);
+            grantExperience(minion instanceof RangedEnemy ? 8 : 6);
+        }
+    }
+
+    private void grantExperience(int amount) {
+        if (Main.addExperience(amount)) {
+            Main.applyPlayerProgress(player);
+            showPickupNotice("LEVEL UP!");
+        } else {
+            showPickupNotice("+" + amount + " EXP");
+        }
     }
 
     private void checkBossMinionsVsPlayer() {
@@ -1051,6 +1100,23 @@ public class BossScene extends AnimationTimer {
     private void addGold(int amount, double x, double y) {
         goldSpawnManager.setForbiddenZones(currentSpikeHazards());
         goldPickups.add(goldSpawnManager.spawn(amount, x, y, pickupItems, goldPickups));
+    }
+
+    private void addFallingPickup(PickupType type, double x, double y) {
+        pickupItems.add(itemSpawnManager.spawnDrop(type, x, y, 1));
+    }
+
+    private void addFallingGold(int amount, double x, double y) {
+        goldPickups.add(goldSpawnManager.spawnDrop(amount, x, y));
+    }
+
+    private void updateFallingDrops(double dt) {
+        for (PickupItem item : pickupItems) {
+            item.updateFalling(dt, ground, platforms, covers);
+        }
+        for (GoldPickup gold : goldPickups) {
+            gold.updateFalling(dt, ground, platforms, covers);
+        }
     }
 
     private List<Rectangle2D> currentSpikeHazards() {
@@ -1125,14 +1191,41 @@ public class BossScene extends AnimationTimer {
         return true;
     }
 
+    private boolean trySwapGroundPotion(int slotIndex) {
+        PickupItem groundItem = findBlockedPotionUnderPlayer();
+        if (groundItem == null) return false;
+
+        InventorySlot dropped = potionInventory.replaceSlot(slotIndex,
+            groundItem.getType(), groundItem.getQuantity());
+        if (dropped == null) return false;
+
+        groundItem.markPickedUp();
+        addPickup(dropped.getType(), player.getX(),
+            player.getY() + player.getHeight() - PickupItem.SIZE, dropped.getCount());
+        pickupItems.removeIf(PickupItem::isPickedUp);
+        showPickupNotice("Potion swapped");
+        return true;
+    }
+
     private PickupItem findBlockedPickupUnderPlayer() {
         if (!inventory.isFull()) return null;
         for (PickupItem item : pickupItems) {
             if (item.isPickedUp()) continue;
+            if (item.getType().isPotion()) continue;
             if (inventory.contains(item.getType())) continue;
             if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) {
                 return item;
             }
+        }
+        return null;
+    }
+
+    private PickupItem findBlockedPotionUnderPlayer() {
+        if (!potionInventory.isFull()) return null;
+        for (PickupItem item : pickupItems) {
+            if (item.isPickedUp() || !item.getType().isPotion()) continue;
+            if (potionInventory.contains(item.getType())) continue;
+            if (Collision.checkAABB(player.getHitbox(), item.getHitbox())) return item;
         }
         return null;
     }
@@ -1144,6 +1237,30 @@ public class BossScene extends AnimationTimer {
             case O -> 2;
             default -> -1;
         };
+    }
+
+    private int keyToPotionSlotIndex(KeyCode key) {
+        return switch (key) {
+            case N -> 0;
+            case M -> 1;
+            default -> -1;
+        };
+    }
+
+    private boolean handleTalentChoiceKey(KeyCode key) {
+        int index = switch (key) {
+            case DIGIT1, NUMPAD1 -> 0;
+            case DIGIT2, NUMPAD2 -> 1;
+            case DIGIT3, NUMPAD3 -> 2;
+            default -> -1;
+        };
+        if (index < 0) return false;
+        if (Main.chooseTalent(index) != null) {
+            Main.applyPlayerProgress(player);
+            showPickupNotice("Talent learned");
+            return true;
+        }
+        return false;
     }
 
     // ── 階段管理 ─────────────────────────────────────────────────────────────
@@ -1201,17 +1318,13 @@ public class BossScene extends AnimationTimer {
      * @param gc 畫布繪圖上下文
      */
     private void render(GraphicsContext gc) {
-        // 1. 背景（暗紫色，營造 Boss 戰氛圍）
-        // TODO: 換成帶有光效的 Boss 戰背景圖片
-        gc.setFill(Color.web("#1a0025"));
-        gc.fillRect(0, 0, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
+        // 1. 背景：火焰地下城布景
+        drawBossBackground(gc);
 
-        // 2. 地板（TODO: 換成地面圖塊）
-        gc.setFill(Color.web("#5a3a1a"));
-        gc.fillRect(ground.getMinX(), ground.getMinY(),
-                    ground.getWidth(), ground.getHeight());
+        // 2. 地板：火山熔岩紋理
+        drawBossGround(gc);
 
-        // 3. 閃躲平台（TODO: 換成石板 Tileset）
+        // 3. 閃躲平台：深色火山石板
         drawPlatforms(gc);
         drawCovers(gc);
 
@@ -1258,22 +1371,120 @@ public class BossScene extends AnimationTimer {
         flowController.drawPauseOverlay(gc);
     }
 
-    /**
-     * 繪製三個閃躲平台（深灰石板色）。
-     * TODO: 換成 Tileset 圖塊後移除此方法。
-     *
-     * @param gc 畫布繪圖上下文
-     */
     private void drawPlatforms(GraphicsContext gc) {
         for (Rectangle2D p : platforms) {
-            // 平台本體（深灰石板）
-            gc.setFill(Color.web("#37474f"));
+            double glow = 0.35 + 0.15 * Math.sin(visualTime * 2.2 + p.getMinX() * 0.02);
+            // 主體：深色火山岩
+            gc.setFill(Color.web("#2a1010"));
             gc.fillRect(p.getMinX(), p.getMinY(), p.getWidth(), p.getHeight());
-
-            // 平台上緣較亮線條，增加立體感
-            gc.setFill(Color.web("#546e7a"));
+            // 頂面高光（暗紅調）
+            gc.setFill(Color.web("#4a2010"));
             gc.fillRect(p.getMinX(), p.getMinY(), p.getWidth(), 3);
+            // 頂緣熔岩邊光（動態）
+            gc.save();
+            gc.setGlobalAlpha(glow);
+            gc.setFill(Color.web("#cc3300"));
+            gc.fillRect(p.getMinX(), p.getMinY(), p.getWidth(), 2);
+            gc.restore();
+            // 石塊紋路
+            gc.setStroke(Color.web("#1a0808"));
+            gc.setLineWidth(1);
+            gc.strokeLine(p.getMinX() + p.getWidth() / 3.0, p.getMinY() + 3,
+                          p.getMinX() + p.getWidth() / 3.0, p.getMinY() + p.getHeight() - 2);
+            gc.strokeLine(p.getMinX() + p.getWidth() * 2.0 / 3, p.getMinY() + 3,
+                          p.getMinX() + p.getWidth() * 2.0 / 3, p.getMinY() + p.getHeight() - 2);
         }
+    }
+
+    private void drawBossBackground(GraphicsContext gc) {
+        // 基底深紫色
+        gc.setFill(Color.web("#1a0025"));
+        gc.fillRect(0, 0, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT);
+        // 兩側暗影面板
+        gc.setFill(Color.web("#0d0015", 0.65));
+        gc.fillRect(0, 0, 55, Config.WINDOW_HEIGHT);
+        gc.fillRect(Config.WINDOW_WIDTH - 55, 0, 55, Config.WINDOW_HEIGHT);
+        // 石柱
+        drawBossPillar(gc, 22, 38);
+        drawBossPillar(gc, Config.WINDOW_WIDTH - 60, 38);
+        // 火炬（石柱頂端）
+        drawBossTorch(gc, 41, GROUND_Y - 340);
+        drawBossTorch(gc, Config.WINDOW_WIDTH - 41, GROUND_Y - 340);
+        // 地面熔岩熱氣暈
+        double haze = 0.18 + 0.06 * Math.sin(visualTime * 1.4);
+        gc.save();
+        gc.setGlobalAlpha(haze);
+        gc.setFill(Color.web("#cc2200"));
+        gc.fillRect(0, GROUND_Y - 72, Config.WINDOW_WIDTH, 72);
+        gc.restore();
+    }
+
+    private void drawBossPillar(GraphicsContext gc, double x, double width) {
+        double h = GROUND_Y - 20;
+        gc.setFill(Color.web("#200820"));
+        gc.fillRect(x, 0, width, h);
+        gc.setFill(Color.web("#2e1030"));
+        gc.fillRect(x, 0, 5, h);
+        gc.setFill(Color.web("#140c18"));
+        gc.fillRect(x + width - 5, 0, 5, h);
+        gc.setFill(Color.web("#3a1040"));
+        gc.fillRect(x - 5, 0, width + 10, 14);
+        gc.setFill(Color.web("#4a1855"));
+        gc.fillRect(x - 5, 0, width + 10, 4);
+        gc.setFill(Color.web("#3a1040"));
+        gc.fillRect(x - 5, GROUND_Y - 14, width + 10, 14);
+    }
+
+    private void drawBossTorch(GraphicsContext gc, double cx, double y) {
+        double flicker = 0.75 + 0.25 * Math.sin(visualTime * 4.8 + cx);
+        gc.setFill(Color.web("#3a1a06"));
+        gc.fillRect(cx - 3, y, 6, 24);
+        gc.save();
+        gc.setGlobalAlpha(0.10 * flicker);
+        gc.setFill(Color.web("#ff4400"));
+        gc.fillOval(cx - 38, y - 40, 76, 64);
+        gc.restore();
+        gc.save();
+        gc.setGlobalAlpha(0.80 * flicker);
+        gc.setFill(Color.web("#cc2200"));
+        gc.fillOval(cx - 9, y - 16, 18, 22);
+        gc.restore();
+        gc.save();
+        gc.setGlobalAlpha(0.90 * flicker);
+        gc.setFill(Color.web("#ff6600"));
+        gc.fillOval(cx - 6, y - 12, 12, 16);
+        gc.restore();
+        gc.save();
+        gc.setGlobalAlpha(0.95 * flicker);
+        gc.setFill(Color.web("#ffcc00"));
+        gc.fillOval(cx - 3, y - 7, 6, 9);
+        gc.restore();
+    }
+
+    private void drawBossGround(GraphicsContext gc) {
+        // 基底火山岩
+        gc.setFill(Color.web("#2a1406"));
+        gc.fillRect(ground.getMinX(), ground.getMinY(), ground.getWidth(), ground.getHeight());
+        // 石磚分割
+        gc.setFill(Color.web("#1e0d04"));
+        gc.setStroke(Color.web("#1a0c03"));
+        gc.setLineWidth(1);
+        for (int col = 0; col * 64 < (int) Config.WINDOW_WIDTH; col++) {
+            gc.fillRect(col * 64 + 1, ground.getMinY() + 1, 62, 18);
+            gc.strokeLine(col * 64, ground.getMinY(), col * 64, ground.getMinY() + ground.getHeight());
+        }
+        // 熔岩裂縫（動態發光）
+        double lavaGlow = 0.55 + 0.20 * Math.sin(visualTime * 2.0);
+        gc.save();
+        gc.setGlobalAlpha(lavaGlow);
+        gc.setFill(Color.web("#ff2200"));
+        for (int pos : new int[]{80, 210, 370, 510, 660}) {
+            gc.fillRect(pos, ground.getMinY() + 3, 3, 14);
+        }
+        gc.restore();
+        // 地面頂緣高光
+        gc.setFill(Color.web("#3d1a08"));
+        gc.fillRect(ground.getMinX(), ground.getMinY(), ground.getWidth(), 3);
     }
 
     private void drawCovers(GraphicsContext gc) {
@@ -1287,20 +1498,60 @@ public class BossScene extends AnimationTimer {
 
     private void drawBossExitDoor(GraphicsContext gc) {
         if (bossExitDoor == null) return;
+        double x = bossExitDoor.getMinX();
+        double y = bossExitDoor.getMinY();
+        double w = bossExitDoor.getWidth();
+        double h = bossExitDoor.getHeight();
+        double pulse = 0.6 + 0.3 * Math.sin(visualTime * 2.8);
+
+        // 外部金色暈光（搏動）
         gc.save();
-        gc.setGlobalAlpha(0.35);
+        gc.setGlobalAlpha(0.12 * pulse);
         gc.setFill(Color.GOLD);
-        gc.fillRect(bossExitDoor.getMinX(), bossExitDoor.getMinY(),
-                    bossExitDoor.getWidth(), bossExitDoor.getHeight());
+        gc.fillOval(x - 22, y - 14, w + 44, h + 28);
         gc.restore();
+
+        // 石拱兩側柱
+        gc.setFill(Color.web("#221808"));
+        gc.fillRect(x - 10, y, 10, h + 2);
+        gc.fillRect(x + w, y, 10, h + 2);
+        gc.fillRoundRect(x - 12, y - 8, w + 24, 18, 6, 6);
+        // 拱柱高光
+        gc.setFill(Color.web("#3d2e10"));
+        gc.fillRect(x - 10, y, 3, h);
+        gc.fillRect(x + w + 7, y, 3, h);
+        gc.fillRect(x - 12, y - 8, w + 24, 4);
+
+        // 門洞底色
+        gc.setFill(Color.web("#1a1000"));
+        gc.fillRect(x, y, w, h);
+        // 金色光暈疊層
+        gc.save();
+        gc.setGlobalAlpha(0.45 * pulse);
+        gc.setFill(Color.GOLD);
+        gc.fillRect(x, y, w, h);
+        gc.restore();
+        // 深色遮罩（凸顯門框）
+        gc.save();
+        gc.setGlobalAlpha(0.5);
+        gc.setFill(Color.web("#2a1800"));
+        gc.fillRoundRect(x + 4, y + 6, w - 8, h - 12, 4, 4);
+        gc.restore();
+        // 上方高光帶（折射感）
+        gc.save();
+        gc.setGlobalAlpha(0.35 + 0.15 * Math.sin(visualTime * 3.5));
+        gc.setFill(Color.web("#ffe090"));
+        gc.fillRoundRect(x + 6, y + 8, w - 12, (h - 16) * 0.35, 3, 3);
+        gc.restore();
+
         gc.setStroke(Color.GOLD);
-        gc.setLineWidth(3);
-        gc.strokeRect(bossExitDoor.getMinX(), bossExitDoor.getMinY(),
-                      bossExitDoor.getWidth(), bossExitDoor.getHeight());
+        gc.setLineWidth(2.5);
+        gc.strokeRect(x, y, w, h);
+
         if (Collision.checkAABB(player.getHitbox(), inflate(bossExitDoor, 14))) {
             gc.setFill(Color.WHITE);
             gc.setFont(Font.font(14));
-            gc.fillText("Press Enter", bossExitDoor.getMinX() - 24, bossExitDoor.getMinY() - 12);
+            gc.fillText("Press Enter", x - 24, y - 12);
         }
     }
 
@@ -1318,15 +1569,21 @@ public class BossScene extends AnimationTimer {
         HudRenderer.drawGold(gc, Main.getGold());
         drawBossHpBar(gc);
         HudRenderer.drawInventorySlots(gc, inventory, selectedInventorySlot);
+        HudRenderer.drawPotionSlots(gc, potionInventory);
         PickupItem blockedItem = findBlockedPickupUnderPlayer();
         if (blockedItem != null) {
             HudRenderer.drawBackpackFullPrompt(gc, inventory, blockedItem);
+        }
+        PickupItem blockedPotion = findBlockedPotionUnderPlayer();
+        if (blockedPotion != null) {
+            HudRenderer.drawPotionFullPrompt(gc, potionInventory, blockedPotion);
         }
         if (inventoryOpen) {
             HudRenderer.drawInventoryOverlay(gc, inventory, selectedInventorySlot);
         }
         HudRenderer.drawControlsHint(gc);
         HudRenderer.drawPickupNotice(gc, pickupNotice, pickupNoticeTimer);
+        HudRenderer.drawTalentSelection(gc, Main.getPlayerProgress());
     }
 
     /**
@@ -1473,6 +1730,7 @@ public class BossScene extends AnimationTimer {
         bombs.clear();
         pickupItems.clear();
         goldPickups.clear();
+        minionExpHandled.clear();
         if (boss != null) {
             boss.handleDeathCleanup();
         }

@@ -103,6 +103,7 @@ public class Boss extends Entity {
      */
     @Override
     public void update(double deltaTime) {
+        capturePreviousPosition();
         if (isDead || deathHandled) return;
 
         if (freezeTimer > 0) {
@@ -287,9 +288,9 @@ public class Boss extends Entity {
         double horizontalDistance = Math.abs(playerCenter - bossCenter);
         boolean playerHigher = player.getY() + player.getHeight() < y + height - 28.0;
         if (playerHigher && horizontalDistance < 260.0) {
-            velocityY = Config.JUMP_FORCE * 0.88;
+            velocityY = Config.JUMP_FORCE * 1.18;
             onGround = false;
-            jumpCooldown = 1.5;
+            jumpCooldown = 1.15;
         }
     }
 
@@ -360,32 +361,128 @@ public class Boss extends Entity {
         }
     }
 
-    /**
-     * 繪製 Boss 主體矩形。顏色依狀態切換以提供視覺回饋。
-     * TODO: 動畫精靈圖待實作，目前以純色矩形代替。
-     *
-     * @param gc 畫布繪圖上下文
-     */
     private void drawBody(GraphicsContext gc) {
-        // 依狀態選擇顏色
-        Color bodyColor = freezeTimer > 0 ? Color.PALETURQUOISE : switch (fsm.getCurrentState()) {
-            case IDLE  -> Color.SLATEGRAY;
-            case CHASE -> Color.ORANGERED;
-            case DASH  -> Color.GOLD;
-            case RAGE  -> Color.CRIMSON;
+        boolean facingRight = (player.getX() + player.getWidth() / 2.0) > (x + width / 2.0);
+        boolean frozen = freezeTimer > 0;
+        BossState state = fsm.getCurrentState();
+
+        // 依狀態決定配色
+        Color bodyDark = frozen ? Color.web("#3a6080") : switch (state) {
+            case IDLE  -> Color.web("#252535");
+            case CHASE -> Color.web("#2a1010");
+            case DASH  -> Color.web("#2a2008");
+            case RAGE  -> Color.web("#1a0505");
+            case HURT  -> Color.web("#c8c8c8");
+            default    -> Color.web("#1a1a1a");
+        };
+        Color bodyMid = frozen ? Color.web("#5898b0") : switch (state) {
+            case IDLE  -> Color.web("#383850");
+            case CHASE -> Color.web("#4a2020");
+            case DASH  -> Color.web("#4a3810");
+            case RAGE  -> Color.web("#3a0a0a");
             case HURT  -> Color.WHITE;
-            case DEAD  -> Color.DARKGRAY;
+            default    -> Color.web("#2a2a2a");
+        };
+        Color eyeColor = frozen ? Color.web("#a0e8ff") : switch (state) {
+            case IDLE  -> Color.web("#7070cc");
+            case CHASE -> Color.web("#ff4444");
+            case DASH  -> Color.web("#ffcc00");
+            case RAGE  -> Color.web("#ff1111");
+            case HURT  -> Color.web("#ff8888");
+            default    -> Color.web("#555555");
+        };
+        Color auraColor = frozen ? Color.DEEPSKYBLUE : switch (state) {
+            case CHASE -> Color.web("#cc1100");
+            case DASH  -> Color.web("#cc8800");
+            case RAGE  -> Color.web("#ff1100");
+            case HURT  -> Color.web("#ff4444");
+            default    -> Color.TRANSPARENT;
+        };
+        double auraAlpha = frozen ? 0.20 : switch (state) {
+            case CHASE -> 0.13;
+            case DASH  -> 0.16;
+            case RAGE  -> 0.22;
+            case HURT  -> 0.28;
+            default    -> 0.0;
         };
 
-        // TODO: 依 facingRight 與動作狀態切換精靈圖幀
-        gc.setFill(bodyColor);
-        gc.fillRect(x, y, width, height);
+        // ── 光暈（在最底層） ───────────────────────────────────────
+        if (auraAlpha > 0) {
+            gc.save();
+            gc.setGlobalAlpha(auraAlpha);
+            gc.setFill(auraColor);
+            gc.fillOval(x - 14, y - 8, width + 28, height + 16);
+            gc.restore();
+        }
 
-        // 以眼睛指示面向（待精靈圖後移除）
-        boolean facingRight = (player.getX() + player.getWidth() / 2.0) > (x + width / 2.0);
-        gc.setFill(Color.BLACK);
-        double eyeX = facingRight ? x + width - 18 : x + 10;
-        gc.fillOval(eyeX, y + 16, 10, 10);
+        // ── 角（頭頂三角） ─────────────────────────────────────────
+        gc.setFill(Color.web("#120a18"));
+        gc.fillPolygon(
+            new double[]{x + 6,  x + 17, x + 3},
+            new double[]{y + 18, y + 18, y - 6}, 3);
+        gc.fillPolygon(
+            new double[]{x + width - 17, x + width - 6, x + width - 3},
+            new double[]{y + 18, y + 18, y - 6}, 3);
+        gc.setFill(bodyMid);
+        gc.fillRect(x + 5,          y + 14, 4, 4);
+        gc.fillRect(x + width - 9,  y + 14, 4, 4);
+
+        // ── 頭盔 ───────────────────────────────────────────────────
+        gc.setFill(bodyDark);
+        gc.fillRoundRect(x + 5, y + 4, width - 10, 22, 5, 5);
+        // 頭盔橫條（護目槽）
+        gc.setFill(bodyMid);
+        gc.fillRect(x + 4, y + 12, width - 8, 8);
+        // 眼睛發光
+        double eL = facingRight ? x + 8  : x + width - 24;
+        double eR = facingRight ? x + 20 : x + width - 12;
+        gc.save();
+        gc.setGlobalAlpha(0.88);
+        gc.setFill(eyeColor);
+        gc.fillOval(eL, y + 13, 10, 6);
+        gc.fillOval(eR, y + 13, 10, 6);
+        gc.restore();
+
+        // ── 護肩 ───────────────────────────────────────────────────
+        gc.setFill(bodyDark);
+        gc.fillRoundRect(x - 6,          y + 24, 14, 22, 3, 3);
+        gc.fillRoundRect(x + width - 8,  y + 24, 14, 22, 3, 3);
+        gc.setFill(bodyMid);
+        gc.fillRect(x - 6,         y + 24, 14, 5);
+        gc.fillRect(x + width - 8, y + 24, 14, 5);
+
+        // ── 軀幹裝甲 ──────────────────────────────────────────────
+        gc.setFill(bodyDark);
+        gc.fillRect(x, y + 24, width, 30);
+        // 甲板橫線
+        gc.setFill(bodyMid);
+        gc.fillRect(x + 4, y + 26, width - 8, 3);
+        gc.fillRect(x + 4, y + 36, width - 8, 3);
+        // 中線縱槽
+        gc.fillRect(x + width / 2.0 - 2, y + 24, 4, 30);
+        // 胸口魔晶（發光圓）
+        gc.save();
+        gc.setGlobalAlpha(0.75);
+        gc.setFill(eyeColor);
+        gc.fillOval(x + width / 2.0 - 9, y + 40, 18, 18);
+        gc.setGlobalAlpha(0.55);
+        gc.setFill(bodyDark);
+        gc.fillOval(x + width / 2.0 - 6, y + 43, 12, 12);
+        gc.restore();
+
+        // ── 下半身 / 披風 ─────────────────────────────────────────
+        gc.setFill(bodyDark);
+        gc.fillRect(x + 4, y + 54, width - 8, 26);
+        // 腿部分割陰影
+        gc.save();
+        gc.setGlobalAlpha(0.55);
+        gc.setFill(Color.web("#06020a"));
+        gc.fillRect(x + width / 2.0 - 2, y + 54, 4, 26);
+        gc.restore();
+        // 下緣帶
+        gc.setFill(bodyMid);
+        gc.fillRect(x + 4, y + 54, width - 8, 4);
+
         drawMeleeSlash(gc);
     }
 

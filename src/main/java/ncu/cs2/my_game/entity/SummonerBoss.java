@@ -5,6 +5,7 @@ import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 public class SummonerBoss extends Boss {
@@ -57,7 +58,7 @@ public class SummonerBoss extends Boss {
         }
 
         summonCooldown -= deltaTime;
-        if (summonCooldown <= 0 && minions.size() < 4 && isOnGround() && !isFrozen()) {
+        if (summonCooldown <= 0 && isOnGround() && !isFrozen()) {
             startSummonMode();
         }
     }
@@ -123,6 +124,10 @@ public class SummonerBoss extends Boss {
     private void summonMinions() {
         Rectangle2D surface = chooseSummonSurface();
         if (surface == null) return;
+        if (minions.size() >= 4) {
+            recallPatrollingMinions(surface);
+            return;
+        }
         double top = surface.getMinY();
         double minX = surface.getMinX() + 8;
         double maxX = surface.getMaxX() - Enemy.ENEMY_W - 8;
@@ -179,7 +184,7 @@ public class SummonerBoss extends Boss {
             double x = Math.max(minX, Math.min(preferredX + offset, maxX));
             Rectangle2D hitbox = new Rectangle2D(x, surface.getMinY() - Enemy.ENEMY_H,
                 Enemy.ENEMY_W, Enemy.ENEMY_H);
-            if (isSpawnClear(hitbox)) {
+            if (isSpawnClear(hitbox, null)) {
                 return x;
             }
         }
@@ -187,9 +192,56 @@ public class SummonerBoss extends Boss {
     }
 
     private boolean isSpawnClear(Rectangle2D hitbox) {
+        return isSpawnClear(hitbox, null);
+    }
+
+    private boolean isSpawnClear(Rectangle2D hitbox, Enemy ignored) {
         for (Enemy minion : minions) {
+            if (minion == ignored) continue;
             if (minion.isAlive() && hitbox.intersects(minion.getHitbox())) return false;
         }
         return !hitbox.intersects(getHitbox());
+    }
+
+    private void recallPatrollingMinions(Rectangle2D surface) {
+        double bossCenter = getX() + getWidth() / 2.0;
+        minions.stream()
+            .filter(Enemy::isAlive)
+            .sorted(Comparator.comparingDouble((Enemy enemy) ->
+                Math.abs(enemy.getX() + enemy.getWidth() / 2.0 - bossCenter)).reversed())
+            .limit(2)
+            .forEach(minion -> recallMinionToSurface(minion, surface));
+    }
+
+    private void recallMinionToSurface(Enemy minion, Rectangle2D surface) {
+        double minX = surface.getMinX() + 8;
+        double maxX = surface.getMaxX() - Enemy.ENEMY_W - 8;
+        double[] preferred = {
+            getX() - Enemy.ENEMY_W - 22,
+            getX() + getWidth() + 22,
+            getX() + getWidth() / 2.0 - Enemy.ENEMY_W / 2.0
+        };
+        for (double baseX : preferred) {
+            double x = findValidRecallX(surface, Math.max(minX, Math.min(baseX, maxX)), minion);
+            if (Double.isNaN(x)) continue;
+            minion.setX(x);
+            minion.setY(surface.getMinY() - Enemy.ENEMY_H);
+            minion.setVelocityX(0);
+            minion.setVelocityY(0);
+            return;
+        }
+    }
+
+    private double findValidRecallX(Rectangle2D surface, double preferredX, Enemy ignored) {
+        double minX = surface.getMinX() + 8;
+        double maxX = surface.getMaxX() - Enemy.ENEMY_W - 8;
+        double[] offsets = {0, -46, 46, -92, 92, -138, 138};
+        for (double offset : offsets) {
+            double x = Math.max(minX, Math.min(preferredX + offset, maxX));
+            Rectangle2D hitbox = new Rectangle2D(x, surface.getMinY() - Enemy.ENEMY_H,
+                Enemy.ENEMY_W, Enemy.ENEMY_H);
+            if (isSpawnClear(hitbox, ignored)) return x;
+        }
+        return Double.NaN;
     }
 }

@@ -16,8 +16,8 @@ import ncu.cs2.my_game.entity.Player;
 import ncu.cs2.my_game.map.DungeonMapRenderer;
 import ncu.cs2.my_game.map.MapValidationResult;
 import ncu.cs2.my_game.map.PlatformValidationResult;
-import ncu.cs2.my_game.map.PlatformDungeonGenerator;
 import ncu.cs2.my_game.map.TileMap;
+import ncu.cs2.my_game.map.TileType;
 import ncu.cs2.my_game.physics.Collision;
 
 import java.util.ArrayList;
@@ -51,11 +51,12 @@ public class Level1Scene extends AnimationTimer {
         gc = canvas.getGraphicsContext2D();
         Scene javafxScene = CanvasSceneSupport.createScaledCanvasScene(stage, canvas);
 
-        tileMap = new PlatformDungeonGenerator().generateLevel(1);
+        tileMap = createTutorialMap();
         goalDoor = tileMap.getExitBounds();
         Fireball.setWorldBounds(tileMap.getWorldWidth(), Config.WINDOW_HEIGHT);
 
         player = new Player(tileMap.getSpawnX(), tileMap.getSpawnY());
+        Main.applyPlayerProgress(player);
         player.startInvincibility(Config.PLAYER_SPAWN_PROTECTION_SECONDS);
         effectManager = new EffectManager();
         flowController = GameFlowController.forScene(this::cleanup, () -> Main.startLevel1());
@@ -144,11 +145,26 @@ public class Level1Scene extends AnimationTimer {
         if (!landed) player.setOnGround(false);
 
         for (Rectangle2D solid : tileMap.getSolidTilesNear(inflate(player.getHitbox(), 2))) {
-            int result = Collision.resolveSolid(player, solid);
-            if (result == -1) {
-                player.setOnGround(true);
+            Collision.resolveSolid(player, solid);
+        }
+        if (hasSolidSupportUnderPlayer()) {
+            player.setOnGround(true);
+        } else if (!landed) {
+            player.setOnGround(false);
+        }
+    }
+
+    private boolean hasSolidSupportUnderPlayer() {
+        Rectangle2D hitbox = player.getHitbox();
+        double feetY = hitbox.getMaxY();
+        for (Rectangle2D solid : tileMap.getSolidTilesNear(inflate(hitbox, 3))) {
+            boolean horizontallyAbove = hitbox.getMaxX() > solid.getMinX() + 1
+                && hitbox.getMinX() < solid.getMaxX() - 1;
+            if (horizontallyAbove && Math.abs(feetY - solid.getMinY()) <= 1.5) {
+                return true;
             }
         }
+        return false;
     }
 
     private void updatePlayerPlatformDrop(double dt) {
@@ -199,8 +215,8 @@ public class Level1Scene extends AnimationTimer {
 
     private void checkPlayerFireballsVsTerrain() {
         for (Fireball fireball : player.getFireballs()) {
-            if (!fireball.isAlive() || fireball.isPiercingEnemies()) continue;
-            for (Rectangle2D tile : tileMap.getStandableTilesNear(inflate(fireball.getHitbox(), 2))) {
+            if (!fireball.isAlive()) continue;
+            for (Rectangle2D tile : tileMap.getSolidTilesNear(inflate(fireball.getHitbox(), 2))) {
                 if (Collision.checkAABB(fireball.getHitbox(), tile)) {
                     fireball.destroy();
                     break;
@@ -246,7 +262,8 @@ public class Level1Scene extends AnimationTimer {
         }
 
         HudRenderer.drawPlayerStatus(gc, player, "LEVEL 1");
-        drawProgress(gc);
+        HudRenderer.drawStageProgress(gc, player.getX(), tileMap.getSpawnX(),
+            goalDoor.getMinX() + goalDoor.getWidth() / 2.0);
         HudRenderer.drawControlsHint(gc);
         flowController.drawDebugOverlay(gc, debugLines());
 
@@ -254,14 +271,6 @@ public class Level1Scene extends AnimationTimer {
             drawGameOverOverlay(gc);
         }
         flowController.drawPauseOverlay(gc);
-    }
-
-    private void drawProgress(GraphicsContext gc) {
-        double ratio = player.getX() / Math.max(1.0, tileMap.getWorldWidth() - Config.WINDOW_WIDTH);
-        gc.setFill(Color.web("#232733"));
-        gc.fillRect(12, 84, 150, 5);
-        gc.setFill(Color.web("#8af0ff"));
-        gc.fillRect(12, 84, 150 * Math.max(0, Math.min(1, ratio)), 5);
     }
 
     private void drawGameOverOverlay(GraphicsContext gc) {
@@ -313,6 +322,39 @@ public class Level1Scene extends AnimationTimer {
 
     private boolean isPortalEnterKey(KeyCode key) {
         return key == KeyCode.ENTER;
+    }
+
+    private TileMap createTutorialMap() {
+        final int width = 48;
+        final int height = 20;
+        final int tile = TileMap.TILE_SIZE;
+        final int floorY = height - 2;
+        TileMap map = new TileMap(width, height);
+
+        for (int x = 0; x < width; x++) {
+            map.setTile(x, floorY, TileType.FLOOR);
+            map.setTile(x, floorY + 1, TileType.FLOOR);
+        }
+
+        map.addMainPlatform(new Rectangle2D(0, floorY * tile, width * tile, tile));
+        map.addPlatformRun(8, floorY - 3, 5, TileType.ONE_WAY_PLATFORM);
+        map.addPlatformRun(17, floorY - 5, 5, TileType.ONE_WAY_PLATFORM);
+        map.addPlatformRun(27, floorY - 4, 6, TileType.ONE_WAY_PLATFORM);
+        map.addPlatformRun(37, floorY - 6, 5, TileType.ONE_WAY_PLATFORM);
+
+        for (int y = floorY - 3; y < floorY; y++) {
+            map.setTile(23, y, TileType.WALL);
+        }
+
+        map.setSpawn(2 * tile, floorY * tile - Config.PLAYER_HEIGHT);
+        Rectangle2D exit = new Rectangle2D((width - 4) * tile, floorY * tile - 70, 42, 70);
+        map.setExitBounds(exit);
+        map.setTile(width - 3, floorY - 2, TileType.EXIT);
+        map.setMapValidationResult(MapValidationResult.valid(0, true, 0));
+        map.setValidationResult(new PlatformValidationResult(
+            true, true, map.getMainPlatforms().size(), map.getMainPlatforms().size(),
+            0, map.getMainPlatforms().size(), 0, 0L, "tutorial", List.of()));
+        return map;
     }
 
     private void cleanup() {
