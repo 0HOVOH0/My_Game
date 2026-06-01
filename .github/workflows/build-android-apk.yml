@@ -1,0 +1,57 @@
+﻿name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/android-apk-actions
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up GraalVM 21
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: 'graalvm'
+          native-image-job-reports: 'true'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Make Maven wrapper executable
+        run: chmod +x ./mvnw
+
+      - name: Build Android native image
+        env:
+          GRAALVM_HOME: ${{ env.JAVA_HOME }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+        run: ./mvnw -B -Pandroid gluonfx:build
+
+      - name: Package APK
+        env:
+          GRAALVM_HOME: ${{ env.JAVA_HOME }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+        run: ./mvnw -B -Pandroid gluonfx:package
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: my-game-android-apk
+          path: |
+            target/gluonfx/**/gvm/*.apk
+            target/gluonfx/**/*.apk
+          if-no-files-found: error

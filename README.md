@@ -1,4 +1,4 @@
-# My Game — 2D JavaFX 平台動作遊戲　v3.3.1
+﻿# My Game — 2D JavaFX 平台動作遊戲　v3.3.6
 
 一款以 JavaFX 21 開發的 2D 橫向捲軸動作遊戲，玩家需穿越多個充滿陷阱的隨機關卡，最終擊敗擁有三個戰鬥階段的 Boss。
 
@@ -240,6 +240,17 @@ Bomb 使用後會在玩家位置生成 `BombEntity`，2 秒後爆炸，半徑 15
 ---
 
 ## Changelog
+
+### v3.3.6 — GitHub Actions APK 打包
+- 新增 `.github/workflows/build-android-apk.yml`，可在 GitHub Linux runner 上執行 Android APK 打包
+- Workflow 使用 GraalVM 21、Android SDK 與 GluonFX `android` profile
+- 支援手動 `workflow_dispatch` 觸發，並會在 `codex/android-apk-actions` branch push 時自動執行
+- 打包完成後會上傳 `my-game-android-apk` artifact，供直接下載 APK
+### v3.3.5 — Android APK 打包設定
+- 新增 GluonFX Maven plugin 與 `android` profile，作為 JavaFX 專案輸出 APK/AAB 的打包入口
+- 新增 `mainClassName` / `gluonfx.target` 設定，桌面版仍保留原本 `javafx:run` 流程
+- `module-info.java` 匯出 `progress` package，讓新經驗 / 天賦資料可被 native image 打包流程解析
+- APK 建置指令預備為 `mvn -Pandroid gluonfx:build` 與 `mvn -Pandroid gluonfx:package`
 
 ### v3.3.4 — 近戰傷害平衡
 - 玩家近戰基礎傷害由測試用 `2000` 下修為 `28`
@@ -746,3 +757,4 @@ Bomb 使用後會在玩家位置生成 `BombEntity`，2 秒後爆炸，半徑 15
 - [ ] 投射物火球特效精靈圖
 - [ ] 開始/結算畫面背景動畫
 - [ ] Tiled 地圖格式支援（從 `.tmx` 讀取平台座標，取代硬編碼陣列）
+

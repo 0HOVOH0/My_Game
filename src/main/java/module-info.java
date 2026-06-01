@@ -18,4 +18,5 @@ module ncu.cs2.my_game {
     exports ncu.cs2.my_game.stage;
     exports ncu.cs2.my_game.shop;
     exports ncu.cs2.my_game.state;
+    exports ncu.cs2.my_game.progress;
 }

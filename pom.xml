@@ -12,6 +12,8 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.12.1</junit.version>
+        <mainClassName>ncu.cs2.my_game.Launcher</mainClassName>
+        <gluonfx.target>host</gluonfx.target>
     </properties>
 
     <dependencies>
@@ -71,6 +73,28 @@
                     </execution>
                 </executions>
             </plugin>
+            <plugin>
+                <groupId>com.gluonhq</groupId>
+                <artifactId>gluonfx-maven-plugin</artifactId>
+                <version>1.0.27</version>
+                <configuration>
+                    <target>${gluonfx.target}</target>
+                    <mainClass>${mainClassName}</mainClass>
+                    <appIdentifier>ncu.cs2.my_game</appIdentifier>
+                    <releaseConfiguration>
+                        <versionCode>1</versionCode>
+                    </releaseConfiguration>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>android</id>
+            <properties>
+                <gluonfx.target>android</gluonfx.target>
+            </properties>
+        </profile>
+    </profiles>
 </project>
