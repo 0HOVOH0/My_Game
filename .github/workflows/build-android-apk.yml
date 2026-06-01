@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-apk:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout repository
@@ -52,5 +52,6 @@ jobs:
           name: my-game-android-apk
           path: staging
           if-no-files-found: error
+
 
 
