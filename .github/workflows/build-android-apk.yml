@@ -17,7 +17,7 @@ jobs:
       - name: Setup GraalVM built by Gluon
         uses: gluonhq/setup-graalvm@master
         with:
-          graalvm: 'gluon-22.1.0.1-Final'
+          graalvm: '22.1.0.1-Final'
           jdk: 'java17'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -52,4 +52,5 @@ jobs:
           name: my-game-android-apk
           path: staging
           if-no-files-found: error
+
 
