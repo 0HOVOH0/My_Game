@@ -39,7 +39,10 @@ jobs:
         run: chmod +x ./mvnw
 
       - name: Build and package APK
-        run: ./mvnw -B -Pandroid gluonfx:build gluonfx:package
+        run: |
+          unset ANDROID_SDK_ROOT
+          unset ANDROID_NDK_ROOT
+          ./mvnw -B -Pandroid gluonfx:build gluonfx:package
 
       - name: Dump Gluon logs on failure
         if: failure()
@@ -74,7 +77,8 @@ jobs:
       - name: Stage APK
         run: |
           mkdir -p staging
-          cp -r target/gluonfx/aarch64-android/gvm/*.apk staging/
+          find target/gluonfx -name '*.apk' -type f -print -exec cp {} staging/ \;
+          ls -la staging
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -82,3 +86,4 @@ jobs:
           name: my-game-android-apk
           path: staging
           if-no-files-found: error
+
