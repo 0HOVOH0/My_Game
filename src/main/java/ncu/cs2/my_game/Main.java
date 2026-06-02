@@ -368,9 +368,6 @@ public class Main extends Application {
         return mapPoolManager.pickNormalMap();
     }
 
-    public static String getMapPoolPreviewDirectory() {
-        return mapPoolManager.getPreviewDirectory().toAbsolutePath().toString();
-    }
 
     public static void advanceAfterBoss() {
         stageNumber++;
@@ -439,3 +436,4 @@ public class Main extends Application {
         launch();
     }
 }
+
