@@ -41,14 +41,36 @@ jobs:
       - name: Build and package APK
         run: ./mvnw -B -Pandroid gluonfx:build gluonfx:package
 
-
       - name: Dump Gluon logs on failure
         if: failure()
         run: |
           echo "=== target/gluonfx/log ==="
-          find target/gluonfx/log -type f -maxdepth 1 -print -exec sh -c 'echo "---       - name: Stage APK ---"; tail -n 240 "      - name: Stage APK"' _ {} \; || true
+          if [ -d target/gluonfx/log ]; then
+            for log in target/gluonfx/log/*; do
+              [ -f "$log" ] || continue
+              echo "--- $log ---"
+              tail -n 240 "$log" || true
+            done
+          fi
           echo "=== target/gluonfx/aarch64-android/gvm/log ==="
-          find target/gluonfx/aarch64-android/gvm/log -type f -print -exec sh -c 'echo "---       - name: Stage APK ---"; tail -n 240 "      - name: Stage APK"' _ {} \; || true
+          if [ -d target/gluonfx/aarch64-android/gvm/log ]; then
+            for log in target/gluonfx/aarch64-android/gvm/log/*; do
+              [ -f "$log" ] || continue
+              echo "--- $log ---"
+              tail -n 240 "$log" || true
+            done
+          fi
+
+      - name: Upload Gluon logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gluon-android-build-logs
+          path: |
+            target/gluonfx/log
+            target/gluonfx/aarch64-android/gvm/log
+          if-no-files-found: ignore
+
       - name: Stage APK
         run: |
           mkdir -p staging
@@ -60,7 +82,3 @@ jobs:
           name: my-game-android-apk
           path: staging
           if-no-files-found: error
-
-
-
-
